@@ -1,0 +1,6 @@
+/tutorial.md
+.stack-work
+*/**/.stack-work
+*.cabal
+bin/*
+.dir-locals.el

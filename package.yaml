@@ -1,0 +1,61 @@
+name: componentm
+synopsis: Monad for allocation and cleanup of application resources
+description: |
+  This library allows you to allocate resources with
+  clean up strategies when initializing your application. 
+  It then provides a Monadic interface to compose multiple 
+  resources without having to deal with cleanup operations 
+  explicitely.
+
+  Check Control.Monad.Component.Tutorial for an example and 
+  more information.
+
+version: '0.0.0.0'
+category: System
+author: Roman Gonzalez
+maintainer: romanandreg@gmail.com
+copyright: © 2017 Roman Gonzalez
+license: MIT
+github: roman/Haskell-componentm
+tested-with: GHC==8.0.1 GHC==8.0.2 GHC==8.2.1
+extra-source-files:
+- README.md
+- CHANGELOG.md
+ghc-options:
+- -Wall
+# as recommended in:
+# https://functor.tokyo/blog/2017-07-28-ghc-warnings-you-should-enable
+- -Wincomplete-uni-patterns
+- -Wincomplete-record-updates
+dependencies:
+- base >=4.8 && <5
+- protolude
+- safe-exceptions
+- text
+- time
+- teardown
+library:
+  source-dirs: src
+  exposed-modules:
+  - Control.Monad.Component.Tutorial
+  - Control.Monad.Component
+  other-modules:
+  - Control.Monad.Component.Internal.Types
+  - Control.Monad.Component.Internal.Core
+  dependencies:
+  - exceptions
+  - deepseq
+tests:
+  componentm-tests:
+    main: TestSuite.hs
+    source-dirs: test/tasty
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - tasty
+    - tasty-hunit
+    - tasty-rerun
+    - componentm
+stability: alpha (experimental)
