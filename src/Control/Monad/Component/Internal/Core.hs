@@ -2,10 +2,10 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Control.Monad.Component.Internal.Core where
 
-import Protolude
+import RIO
 
 import Control.Monad.Component.Internal.Types
-import Control.Teardown                       (Teardown, newTeardown, teardown)
+import Control.Teardown                       (Teardown, newTeardown, runTeardown_)
 
 --------------------------------------------------------------------------------
 
@@ -29,7 +29,7 @@ runComponentM !appName (ComponentM ma) = do
       appTeardown <- newTeardown appName cleanupActions
       -- Cleanup resources allocated so far and throw error
       -- list
-      void $ teardown appTeardown
+      void $ runTeardown_ appTeardown
       throwIO (ComponentStartupFailure errList)
 
     Right (a, cleanupActions) -> do

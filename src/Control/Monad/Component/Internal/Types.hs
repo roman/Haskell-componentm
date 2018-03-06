@@ -2,14 +2,13 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Control.Monad.Component.Internal.Types where
 
-import Protolude hiding (try)
+import RIO
 
-import           Control.Exception.Safe (try)
 import           Control.Monad.Catch    (MonadThrow (..))
 import           Control.Monad.Fail     (MonadFail (..))
-import qualified Data.Text              as T
+import qualified RIO.Text              as T
 
-import Control.Teardown (ITeardown (..), Teardown)
+import Control.Teardown (HasTeardown (..), Teardown)
 
 --------------------------------------------------------------------------------
 
@@ -149,6 +148,6 @@ fromComponent =
 
 instance NFData a => NFData (Component a)
 
-instance ITeardown (Component a) where
-  teardown =
-    teardown . componentTeardown
+instance HasTeardown (Component a) where
+  getTeardown =
+    componentTeardown

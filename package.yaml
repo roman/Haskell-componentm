@@ -2,12 +2,12 @@ name: componentm
 synopsis: Monad for allocation and cleanup of application resources
 description: |
   This library allows you to allocate resources with
-  clean up strategies when initializing your application. 
-  It then provides a Monadic interface to compose multiple 
-  resources without having to deal with cleanup operations 
+  clean up strategies when initializing your application.
+  It then provides a Monadic interface to compose multiple
+  resources without having to deal with cleanup operations
   explicitely.
 
-  Check Control.Monad.Component.Tutorial for an example and 
+  Check Control.Monad.Component.Tutorial for an example and
   more information.
 
 version: '0.0.0.0'
@@ -29,9 +29,7 @@ ghc-options:
 - -Wincomplete-record-updates
 dependencies:
 - base >=4.8 && <5
-- protolude
-- safe-exceptions
-- text
+- rio
 - time
 - teardown
 library:
