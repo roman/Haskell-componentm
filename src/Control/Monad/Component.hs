@@ -26,8 +26,10 @@ module Control.Monad.Component
   -- * 'Teardown' functions
   , Teardown
   , TeardownResult (..)
-  , teardown
+  , runTeardown
+  , runTeardown_
   , newTeardown
+  , getTeardown
 
   -- * Re-exports
   , throwM
@@ -35,15 +37,14 @@ module Control.Monad.Component
 
   -- * Functions to build 'ComponentM' sub-routines
   , buildComponent
-  , buildComponentWithCleanup
-  , buildComponentWithTeardown
+  , buildComponent_
   ) where
 
 import Control.Monad.Catch                    (throwM)
 import Control.Monad.Component.Internal.Core
-    (buildComponent, buildComponentWithCleanup, buildComponentWithTeardown, runComponentM)
+    (buildComponent, buildComponent_, runComponentM)
 import Control.Monad.Component.Internal.Types
     (Component, ComponentError (..), ComponentM, fromComponent)
 import Control.Monad.Fail                     (fail)
 import Control.Teardown
-    (Teardown, TeardownResult (..), newTeardown, teardown)
+    (Teardown, TeardownResult (..), newTeardown, runTeardown, runTeardown_, getTeardown)
