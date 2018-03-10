@@ -30,6 +30,7 @@ ghc-options:
 dependencies:
 - base >=4.8 && <5
 - rio
+- containers
 - time
 - teardown
 library:

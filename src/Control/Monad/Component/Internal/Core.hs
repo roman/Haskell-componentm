@@ -3,11 +3,21 @@
 module Control.Monad.Component.Internal.Core where
 
 import RIO
+import RIO.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
+import qualified RIO.HashMap as HashMap
 
 import Control.Monad.Component.Internal.Types
-import Control.Teardown                       (Teardown, newTeardown, runTeardown_)
+import Control.Teardown (IResource, newTeardown, runTeardown_, emptyTeardown)
 
 --------------------------------------------------------------------------------
+
+-- | Track duration time of the execution of an IO sub-routine
+trackExecutionTime :: IO a -> IO (NominalDiffTime, a)
+trackExecutionTime routine = do
+  start  <- getCurrentTime
+  result <- routine
+  end    <- getCurrentTime
+  return (diffUTCTime end start, result)
 
 -- | Given the name and a `ComponentM` sub-routine, this function builds an `IO`
 -- sub-routine that returns a `Component` record.
@@ -25,15 +35,17 @@ runComponentM :: Text -> ComponentM a -> IO (Component a)
 runComponentM !appName (ComponentM ma) = do
   eResult <- ma
   case eResult of
-    Left (errList, cleanupActions) -> do
-      appTeardown <- newTeardown appName cleanupActions
+    Left (errList, componentDeps) -> do
+      let teardownList = componentToTeardown componentDeps
+      appTeardown <- newTeardown appName teardownList
       -- Cleanup resources allocated so far and throw error
       -- list
-      void $ runTeardown_ appTeardown
+      runTeardown_ appTeardown
       throwIO (ComponentStartupFailure errList)
 
-    Right (a, cleanupActions) -> do
-      appTeardown <- newTeardown appName cleanupActions
+    Right (a, componentDeps) -> do
+      let teardownList = componentToTeardown componentDeps
+      appTeardown  <- newTeardown appName teardownList
       return $! Component a appTeardown
 
 -- | Transforms an `IO` sub-routine into a `ComponentM` sub-routine; the given
@@ -42,34 +54,22 @@ runComponentM !appName (ComponentM ma) = do
 -- * First position represents the resource being returned from
 --   the component
 --
--- * Second position represents a named cleanup action that tears down
---   allocated resources to create the first element of the tuple
---
-buildComponentWithCleanup :: IO (a, (Text, IO ())) -> ComponentM a
-buildComponentWithCleanup !ma =
-  ComponentM $ do
-    (a, (desc, cleanupAction)) <- ma
-    teardownAction <- newTeardown desc cleanupAction
-    return $ Right (a, [teardownAction])
-
--- | Transforms an `IO` sub-routine into a `ComponentM` sub-routine; the given
--- `IO` sub-routine must return a tuple where:
---
--- * First position represents the resource being returned from
---   the component
---
--- * Second position represents a `Teardown` record that cleans up allocated
+-- * Second position represents a cleanup operation that tears down allocated
 --   resources to create the first element of the tuple
 --
-buildComponentWithTeardown :: IO (a, Teardown) -> ComponentM a
-buildComponentWithTeardown !ma =
-  ComponentM $ (\(a, resourceTeardown) ->
-                  Right (a, [resourceTeardown])) <$> ma
+buildComponent :: IResource cleanup => Text ->  IO (a, cleanup) -> ComponentM a
+buildComponent !desc !ma =
+  ComponentM $ do
+    (elapsedTime, (a, cleanupAction)) <- trackExecutionTime ma
+    teardownAction <- newTeardown desc cleanupAction
+    return $ Right (a, HashMap.singleton desc $ ComponentItem desc elapsedTime mempty teardownAction)
 
 -- | Transforms an `IO` sub-routine into a `ComponentM` sub-routine; the given
 -- `IO` sub-routine returns a resource that does not allocate any other
 -- resources that would need to be cleaned up on a system shutdown.
 --
-buildComponent :: IO a -> ComponentM a
-buildComponent !ma =
-  ComponentM $ (\a -> Right (a, [])) <$> ma
+buildComponent_ :: Text -> IO a -> ComponentM a
+buildComponent_ !desc !ma =
+  ComponentM $ do
+    (elapsedTime, a) <- trackExecutionTime ma
+    return $ Right (a, HashMap.singleton desc $ ComponentItem desc elapsedTime mempty (emptyTeardown desc))
