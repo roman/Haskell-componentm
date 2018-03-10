@@ -21,18 +21,21 @@ tested-with: GHC==8.0.1 GHC==8.0.2 GHC==8.2.1
 extra-source-files:
 - README.md
 - CHANGELOG.md
+
 ghc-options:
 - -Wall
 # as recommended in:
 # https://functor.tokyo/blog/2017-07-28-ghc-warnings-you-should-enable
 - -Wincomplete-uni-patterns
 - -Wincomplete-record-updates
+
 dependencies:
 - base >=4.8 && <5
-- rio
+- rio >= 0.0.3
 - containers
 - time
-- teardown
+- teardown >= 0.3
+
 library:
   source-dirs: src
   exposed-modules:
@@ -44,6 +47,7 @@ library:
   dependencies:
   - exceptions
   - deepseq
+
 tests:
   componentm-tests:
     main: TestSuite.hs
