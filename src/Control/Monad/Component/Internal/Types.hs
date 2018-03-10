@@ -10,7 +10,6 @@ import qualified RIO.Text as Text
 
 import           Data.Graph (graphFromEdges', topSort)
 import           Control.Monad.Catch    (MonadThrow (..))
-import           Control.Monad.Fail     (MonadFail (..))
 
 import Control.Teardown (HasTeardown (..), Teardown)
 
@@ -25,50 +24,53 @@ instance Exception ComponentError
 
 type Description = Text
 
-data ComponentItem
-  = ComponentItem {
-      ciDescription            :: !Description
-    , ciElapsedTime :: !NominalDiffTime
-    , ciDependencies    :: !(Set Description)
-    , ciTeardown    :: !Teardown
+data ComponentNode
+  = ComponentNode {
+      cnDescription            :: !Description
+    , cnElapsedTime :: !NominalDiffTime
+    , cnDependencies    :: !(Set Description)
+    , cnTeardown    :: !Teardown
     }
   deriving (Generic)
 
-type ComponentDeps =
-  HashMap Description ComponentItem
+type DependencyTable =
+  HashMap Description ComponentNode
 
-appendDependency :: Description -> ComponentItem -> ComponentItem
-appendDependency dependency component =
-  component {
-    ciDependencies =
-      S.insert dependency (ciDependencies component)
+appendDependency :: Description -> ComponentNode -> ComponentNode
+appendDependency dependency node =
+  node {
+    cnDependencies =
+      S.insert dependency (cnDependencies node)
   }
 
-appendDependencies
-  :: ComponentDeps
-  -> ComponentDeps
-  -> ComponentDeps
-appendDependencies deps current =
-  M.Hash.map (\dep -> foldr appendDependency dep (M.Hash.keys deps)) current
-  & M.Hash.union deps
-
-componentToTeardown :: ComponentDeps -> [Teardown]
-componentToTeardown depMap =
+joinDependencyTables :: DependencyTable -> DependencyTable -> DependencyTable
+joinDependencyTables depTable1 depTable2 =
   let
-    depList :: [(ComponentItem, Description, [Description])]
-    depList =
-      M.Hash.foldrWithKey
-        (\k node acc -> (node, k, S.toList $ ciDependencies node):acc)
-        []
-        depMap
+    appendDependenciesToNode node =
+      foldr appendDependency node (M.Hash.keys depTable1)
+  in
+    -- First, we add all keys from depTable1 to all nodes of depTable2
+    M.Hash.map appendDependenciesToNode depTable2
+    -- Then, we join both depTable1 and depTable2
+    & M.Hash.union depTable1
 
-    (componentGraph, lookupComponent) =
-      graphFromEdges' depList
+dependencyTableToTeardown :: DependencyTable -> [Teardown]
+dependencyTableToTeardown depTable =
+  let
+    componentGraphEdges :: [(ComponentNode, Description, [Description])]
+    componentGraphEdges =
+      M.Hash.foldrWithKey
+        (\k node acc -> (node, k, S.toList $ cnDependencies node):acc)
+        []
+        depTable
+
+    (componentGraph, lookupComponentNode) =
+      graphFromEdges' componentGraphEdges
 
   in
-    map (\vertex ->
-           let (component, _, _) = lookupComponent vertex
-           in ciTeardown component)
+    map (\node ->
+           let (component, _, _) = lookupComponentNode node
+           in cnTeardown component)
         (topSort componentGraph)
 
 -- | `ComponentM` is a wrapper of the `IO` monad that automatically deals with
@@ -77,8 +79,8 @@ componentToTeardown depMap =
 -- `buildComponent`, `buildComponentWithCleanup` and
 -- `buildComponentWithTeardown` functions.
 newtype ComponentM a
-  = ComponentM (IO (Either ([SomeException], ComponentDeps)
-                           (a, ComponentDeps)))
+  = ComponentM (IO (Either ([SomeException], DependencyTable)
+                           (a, DependencyTable)))
 
 instance Functor ComponentM where
   fmap f (ComponentM action) =
@@ -96,84 +98,89 @@ instance Applicative ComponentM where
       $ return
       $ Right (a, M.Hash.empty)
 
-  (ComponentM mf) <*> (ComponentM mm) = ComponentM $ do
-    withAsync mf $ \amf ->
-      withAsync mm $ \amm -> do
-        ef <- waitCatch amf
-        em <- waitCatch amm
-        case (ef, em) of
-          ( Left err1, Left err2 ) ->
-            return $ Left ( [err1, err2], M.Hash.empty )
+  (ComponentM f) <*> (ComponentM a) = ComponentM $ do
+    withAsync f $ \fAsync ->
+      withAsync a $ \aAsync -> do
+        fValue <- waitCatch fAsync
+        aValue <- waitCatch aAsync
+        case (fValue, aValue) of
+          ( Left fErr, Left aErr ) ->
+            return $ Left ( [fErr, aErr], M.Hash.empty )
 
-          ( Left err1, Right (Left (err2, cs2)) ) ->
-            return $ Left ( [err1] <> err2, cs2 )
+          ( Left fErr, Right (Left (aErr, aDepTable)) ) ->
+            return $ Left ( [fErr] <> aErr, aDepTable )
 
-          ( Left err1, Right (Right (_, cs2)) ) ->
-            return $ Left ( [err1], cs2 )
+          ( Left fErr, Right (Right (_, aDepTable)) ) ->
+            return $ Left ( [fErr], aDepTable )
 
 
-          ( Right (Left (err1, deps1)), Left err2 ) ->
-            return $ Left ( err1 <> [err2], deps1 )
+          ( Right (Left (fErr, fDepTable)), Left aErr ) ->
+            return $ Left ( fErr <> [aErr], fDepTable )
 
-          ( Right (Right (_, deps1)), Left err2 ) ->
-            return $ Left ( [err2], deps1 )
+          ( Right (Right (_, fDepTable)), Left aErr ) ->
+            return $ Left ( [aErr], fDepTable )
 
-          ( Right (Left (err, deps1)), Right (Right (_, cs2)) ) ->
-            return $ Left ( err
-                          , deps1 <> cs2
+          ( Right (Left (fErr, fDepTable)), Right (Right (_, aDepTable)) ) ->
+            return $ Left ( fErr
+                          , fDepTable <> aDepTable
                           )
 
-          ( Right (Left (err1, deps1)), Right (Left (err2, cs2)) ) ->
-            return $ Left ( err1 <> err2
-                          , deps1 <> cs2
+          ( Right (Left (fErr, fDepTable)), Right (Left (aErr, aDepTable)) ) ->
+            return $ Left ( fErr <> aErr
+                          , fDepTable <> aDepTable
                           )
 
-          ( Right (Right (_, deps1)), Right (Left (err, cs2)) ) ->
-            return $ Left ( err
-                          , deps1 <> cs2
+          ( Right (Right (_, fDepTable)), Right (Left (aErr, aDepTable)) ) ->
+            return $ Left ( aErr
+                          , fDepTable <> aDepTable
                           )
 
-          ( Right (Right (f, deps1)), Right (Right (a, cs2)) ) ->
-            return $ Right ( f a
-                           , deps1 <> cs2
+          ( Right (Right (fVal, fDepTable)), Right (Right (aVal, aDepTable)) ) ->
+            return $ Right ( fVal aVal
+                           , fDepTable <> aDepTable
                            )
 
 instance Monad ComponentM where
   return =
     pure
 
-  (ComponentM action0) >>= f = ComponentM $ do
-    eResult0 <- action0
-    case eResult0 of
-      Right (a, deps0) -> do
+  (ComponentM m) >>= f = ComponentM $ do
+    aResult <- m
+    case aResult of
+      Right (a, aDepTable) -> do
         let
-          (ComponentM action1) = f a
+          (ComponentM m1) = f a
 
-        eResult1 <- try action1
+        bResult <- try m1
 
-        case eResult1 of
+        case bResult of
           -- There was an exception via the IO Monad
-          Left err ->
-            return $ Left ([err], deps0)
+          Left bErr ->
+            return $ Left ([bErr], aDepTable)
 
           -- There was an exception either via `fail` or `throwM`
-          Right (Left (err, deps1)) ->
+          Right (Left (bErr, bDepTable)) ->
             return
-            $ Left (err, appendDependencies deps0 deps1)
+            $ Left (bErr, joinDependencyTables aDepTable bDepTable)
 
-          Right (Right (b, deps1)) ->
+          Right (Right (b, bDepTable)) ->
             return
-            $ Right (b, appendDependencies deps0 deps1)
+            $ Right (b, joinDependencyTables aDepTable bDepTable)
 
 
-      Left (err, deps0) ->
-        return $ Left (err, deps0)
+      Left (aErr, aDepTable) ->
+        return $ Left (aErr, aDepTable)
 
-instance MonadFail ComponentM where
   fail str =
     ComponentM
       $ return
       $ Left ([toException $! ComponentFailure (Text.pack str)], M.Hash.empty)
+
+-- instance MonadFail ComponentM where
+--   fail str =
+--     ComponentM
+--       $ return
+--       $ Left ([toException $! ComponentFailure (Text.pack str)], M.Hash.empty)
 
 instance MonadThrow ComponentM where
   throwM e =

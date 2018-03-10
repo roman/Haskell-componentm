@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Protolude
+import RIO
 
 import Test.Tasty                   (defaultMainWithIngredients, testGroup)
 import Test.Tasty.Ingredients.Rerun (rerunningTests)

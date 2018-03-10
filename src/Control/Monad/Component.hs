@@ -33,7 +33,6 @@ module Control.Monad.Component
 
   -- * Re-exports
   , throwM
-  , fail
 
   -- * Functions to build 'ComponentM' sub-routines
   , buildComponent
@@ -45,6 +44,5 @@ import Control.Monad.Component.Internal.Core
     (buildComponent, buildComponent_, runComponentM)
 import Control.Monad.Component.Internal.Types
     (Component, ComponentError (..), ComponentM, fromComponent)
-import Control.Monad.Fail                     (fail)
 import Control.Teardown
     (Teardown, TeardownResult (..), newTeardown, runTeardown, runTeardown_, getTeardown)
