@@ -1,13 +1,16 @@
+{-# LANGUAGE NamedFieldPuns   #-}
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Control.Monad.Component.Internal.Core where
 
 import RIO
 import RIO.Time (NominalDiffTime, diffUTCTime, getCurrentTime)
+
+import qualified RIO.Set as Set
 import qualified RIO.HashMap as HashMap
 
 import Control.Monad.Component.Internal.Types
-import Control.Teardown (IResource, newTeardown, runTeardown_, emptyTeardown)
+import Control.Teardown (newTeardown, runTeardown, emptyTeardown)
 
 --------------------------------------------------------------------------------
 
@@ -19,57 +22,112 @@ trackExecutionTime routine = do
   end    <- getCurrentTime
   return (diffUTCTime end start, result)
 
--- | Given the name and a `ComponentM` sub-routine, this function builds an `IO`
--- sub-routine that returns a `Component` record.
---
--- The name argument is used for trace-ability purposes when executing the
--- `teardown` of a resulting `Component`.
---
--- * A note on error scenarios:
---
--- Sometimes the given `ComponentM` sub-routine may fail on execution, in such
--- cases, this function will teardown all component resources allocated so far
--- and throw a `ComponentStartupFailure` exception.
---
-runComponentM :: Text -> ComponentM a -> IO (Component a)
-runComponentM !appName (ComponentM ma) = do
-  eResult <- ma
-  case eResult of
-    Left (errList, depTable) -> do
-      let teardownList = dependencyTableToTeardown depTable
-      appTeardown <- newTeardown appName teardownList
-      -- Cleanup resources allocated so far and throw error
-      -- list
-      runTeardown_ appTeardown
-      throwIO (ComponentStartupFailure errList)
-
-    Right (a, depTable) -> do
-      let teardownList = dependencyTableToTeardown depTable
-      appTeardown  <- newTeardown appName teardownList
-      return $! Component a appTeardown
-
--- | Transforms an `IO` sub-routine into a `ComponentM` sub-routine; the given
--- `IO` sub-routine must return a tuple where:
---
--- * First position represents the resource being returned from
---   the component
---
--- * Second position represents a cleanup operation that tears down allocated
---   resources to create the first element of the tuple
---
-buildComponent :: IResource cleanup => Text ->  IO (a, cleanup) -> ComponentM a
-buildComponent !desc !ma =
-  ComponentM $ do
-    (elapsedTime, (a, cleanupAction)) <- trackExecutionTime ma
-    componentNodeTeardown <- newTeardown desc cleanupAction
-    return $ Right (a, HashMap.singleton desc $ ComponentNode desc elapsedTime mempty componentNodeTeardown)
-
 -- | Transforms an `IO` sub-routine into a `ComponentM` sub-routine; the given
 -- `IO` sub-routine returns a resource that does not allocate any other
 -- resources that would need to be cleaned up on a system shutdown.
 --
 buildComponent_ :: Text -> IO a -> ComponentM a
-buildComponent_ !desc !ma =
-  ComponentM $ do
-    (elapsedTime, a) <- trackExecutionTime ma
-    return $ Right (a, HashMap.singleton desc $ ComponentNode desc elapsedTime mempty (emptyTeardown desc))
+buildComponent_ !componentDesc !ma =
+  ComponentM $ mask $ \restore -> do
+    (buildElapsedTime, result) <- trackExecutionTime (try $ restore ma)
+    case result of
+      Left err -> do
+        let
+          build =
+              Build { componentDesc
+                    , componentTeardown = emptyTeardown componentDesc
+                    , buildElapsedTime
+                    , buildFailure = Just err
+                    , buildDependencies = Set.empty
+                    }
+          buildTable =
+            HashMap.singleton componentDesc build
+        return $ Left ([ComponentStartupFailure componentDesc err], buildTable)
+
+      Right output -> do
+        let
+          build =
+              Build { componentDesc
+                    , componentTeardown = emptyTeardown componentDesc
+                    , buildElapsedTime
+                    , buildFailure = Nothing
+                    , buildDependencies = Set.empty
+                    }
+          buildTable =
+            HashMap.singleton componentDesc build
+        return $ Right (output, buildTable)
+
+buildComponent :: Text -> IO a -> (a -> IO ()) -> (a -> IO b) -> ComponentM b
+buildComponent !componentDesc !construct !release !transform = do
+  ComponentM $ mask $ \restore -> do
+
+    (buildElapsedTime, (result, componentTeardown)) <-
+      trackExecutionTime $ startComponent restore
+
+    let
+      buildFailure = either (Just . toException) (const Nothing) result
+
+      build =
+        Build { componentDesc
+              , componentTeardown
+              , buildElapsedTime
+              , buildFailure
+              , buildDependencies = Set.empty
+              }
+
+      buildTable =
+        HashMap.singleton componentDesc build
+
+    case result of
+      Left err ->
+        return
+        $ Left ( [err], buildTable )
+
+      Right output -> do
+        return
+        $ Right ( output, buildTable )
+
+  where
+    startComponent restore = do
+      resource <- construct
+      resourceTeardown <- newTeardown componentDesc (release resource)
+      result  <- restore $ try $ transform resource
+      return $ case result of
+        Left err ->
+          (Left $ ComponentStartupFailure componentDesc err, resourceTeardown)
+        Right output ->
+          (Right output, resourceTeardown)
+
+runComponentM1
+  :: (ComponentEvent -> IO ())
+  -> Text
+  -> ComponentM a
+  -> (a -> IO b)
+  -> IO b
+runComponentM1 !logFn !appName !(ComponentM buildFn) !appFn = mask $ \restore -> do
+  result <- restore buildFn
+  case result of
+    Left (errList, buildTable) -> do
+      appTeardown    <- buildTableToTeardown appName buildTable
+      teardownResult <- runTeardown appTeardown
+      restore $ logFn $ ComponentReleased teardownResult
+      throwIO $ ComponentBuildFailed errList teardownResult
+
+    Right (resource, buildTable) -> do
+      let buildList = buildTableToOrderedList buildTable
+      restore $ logFn $ ComponentBuilt $ BuildResult buildList
+
+      appTeardown    <- buildTableToTeardown appName buildTable
+      appResult      <- tryAny $ restore $ appFn resource
+      teardownResult <- runTeardown appTeardown
+      restore $ logFn $ ComponentReleased teardownResult
+
+      case appResult of
+        Left appError ->
+          throwIO $ ComponentRuntimeFailed appError teardownResult
+        Right output ->
+          return output
+
+runComponentM :: Text -> ComponentM a -> (a -> IO b) -> IO b
+runComponentM =
+  runComponentM1 (const $ return ())

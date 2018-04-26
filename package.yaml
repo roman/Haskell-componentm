@@ -35,6 +35,7 @@ dependencies:
 - containers
 - time
 - teardown >= 0.3
+- prettyprinter
 
 library:
   source-dirs: src

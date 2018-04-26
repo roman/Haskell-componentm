@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-9.5
+resolver: lts-11.4
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -37,15 +37,14 @@ resolver: lts-9.5
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - .
-- vendor/teardown
 
 # - 'examples/teardown-example'
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-- rio-0.0.3.0
-- typed-process-0.2.1.0
-- unliftio-0.2.4.0
+- rio-0.1.1.0
+- typed-process-0.2.2.0
+- unliftio-0.2.6.0
 - unliftio-core-0.1.1.0
 
 # Override default flag values for local packages and extra-deps

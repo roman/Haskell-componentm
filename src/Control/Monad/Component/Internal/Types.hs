@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Control.Monad.Component.Internal.Types where
@@ -6,81 +8,129 @@ import RIO
 import RIO.Time (NominalDiffTime)
 import qualified RIO.Set as S
 import qualified RIO.HashMap as M.Hash
-import qualified RIO.Text as Text
+
+import Data.Text.Prettyprint.Doc ((<+>), Pretty, pretty)
+import qualified Data.Text.Prettyprint.Doc as Pretty
 
 import           Data.Graph (graphFromEdges', topSort)
 import           Control.Monad.Catch    (MonadThrow (..))
 
-import Control.Teardown (HasTeardown (..), Teardown)
+import Control.Teardown (Teardown, TeardownResult, newTeardown)
 
 --------------------------------------------------------------------------------
 
 data ComponentError
-  = ComponentFailure !Text
-  | ComponentStartupFailure ![SomeException]
+  = ComponentBuildFailure   !SomeException
+  | ComponentStartupFailure !Text !SomeException
   deriving (Generic, Show)
 
 instance Exception ComponentError
 
+-- | Failure raised when the application callback throws an exception
+data ComponentRuntimeFailed
+  = ComponentRuntimeFailed !SomeException !TeardownResult
+  deriving (Generic, Show)
+
+instance Exception ComponentRuntimeFailed
+
+-- | Failure raised when construction of ComponentM throws an exception
+data ComponentBuildFailed
+  = ComponentBuildFailed ![ComponentError] !TeardownResult
+  deriving (Generic, Show)
+
+instance Exception ComponentBuildFailed
+
 type Description = Text
 
-data ComponentNode
-  = ComponentNode {
-      cnDescription            :: !Description
-    , cnElapsedTime :: !NominalDiffTime
-    , cnDependencies    :: !(Set Description)
-    , cnTeardown    :: !Teardown
+data Build
+  = Build {
+      componentDesc      :: !Description
+    , componentTeardown  :: !Teardown
+    , buildElapsedTime   :: !NominalDiffTime
+    , buildFailure       :: !(Maybe SomeException)
+    , buildDependencies  :: !(Set Description)
     }
   deriving (Generic)
 
-type DependencyTable =
-  HashMap Description ComponentNode
+instance Pretty Build where
+  pretty Build {componentDesc, buildElapsedTime, buildFailure} =
+    let
+      statusSymbol :: Text
+      statusSymbol = if isJust buildFailure then "✘" else "✓"
 
-appendDependency :: Description -> ComponentNode -> ComponentNode
-appendDependency dependency node =
-  node {
-    cnDependencies =
-      S.insert dependency (cnDependencies node)
-  }
+      errorInfo =
+        if isJust buildFailure then
+          [
+            Pretty.hardline
+          , Pretty.pipe <+> pretty (show buildFailure)
+          ]
+        else
+          []
 
-joinDependencyTables :: DependencyTable -> DependencyTable -> DependencyTable
-joinDependencyTables depTable1 depTable2 =
-  let
-    appendDependenciesToNode node =
-      foldr appendDependency node (M.Hash.keys depTable1)
-  in
-    -- First, we add all keys from depTable1 to all nodes of depTable2
-    M.Hash.map appendDependenciesToNode depTable2
-    -- Then, we join both depTable1 and depTable2
-    & M.Hash.union depTable1
+    in
+      Pretty.hang 4
+      $ Pretty.hsep
+      $ [ Pretty.fill 3 (pretty statusSymbol)
+        , Pretty.fillBreak 10 (pretty componentDesc)
+        , Pretty.parens (pretty $ show buildElapsedTime)
+        ] <> errorInfo
 
-dependencyTableToTeardown :: DependencyTable -> [Teardown]
-dependencyTableToTeardown depTable =
-  let
-    componentGraphEdges :: [(ComponentNode, Description, [Description])]
-    componentGraphEdges =
-      M.Hash.foldrWithKey
-        (\k node acc -> (node, k, S.toList $ cnDependencies node):acc)
-        []
-        depTable
 
-    (componentGraph, lookupComponentNode) =
-      graphFromEdges' componentGraphEdges
+instance Display Build where
+  display = displayShow . pretty
 
-  in
-    map (\node ->
-           let (component, _, _) = lookupComponentNode node
-           in cnTeardown component)
-        (topSort componentGraph)
+type BuildTable = HashMap Description Build
 
--- | `ComponentM` is a wrapper of the `IO` monad that automatically deals with
--- the composition of `Teardown` sub-routines from resources allocated in every
--- resource of your application. To build `ComponentM` actions see the
--- `buildComponent`, `buildComponentWithCleanup` and
--- `buildComponentWithTeardown` functions.
+newtype BuildResult
+  = BuildResult [Build]
+
+instance Pretty BuildResult where
+  pretty (BuildResult builds) =
+    Pretty.vsep (map pretty builds)
+
+instance Display BuildResult where
+  display buildResult =
+    displayShow $ pretty buildResult
+
+data ComponentEvent
+  = ComponentBuilt !BuildResult
+  | ComponentReleased !TeardownResult
+
+instance Pretty ComponentEvent where
+  pretty ev =
+    case ev of
+      ComponentBuilt buildResult ->
+        pretty buildResult
+      ComponentReleased teardownResult ->
+        pretty (show teardownResult)
+
+instance Display ComponentEvent where
+  display = displayShow . pretty
+
+
+-- newtype BuildError
+--   = BuildError { fromBuildError :: [ComponentError] }
+--   deriving (Generic, Show)
+
+-- instance Exception BuildError
+
+-- instance Pretty BuildError where
+--   pretty (BuildError errList) =
+--     Pretty.indent 2
+--      $ Pretty.vsep
+--      $ ["Your application failed with the following errors:"]
+--      ++ map (\err -> Pretty.hsep ["-", pretty (show err)]) errList
+
+-- instance Display BuildError where
+--   display = displayShow . pretty
+
+--------------------
+
 newtype ComponentM a
-  = ComponentM (IO (Either ([SomeException], DependencyTable)
-                           (a, DependencyTable)))
+  = ComponentM (IO (Either ([ComponentError], BuildTable)
+                           (a, BuildTable)))
+
+--------------------
 
 instance Functor ComponentM where
   fmap f (ComponentM action) =
@@ -89,128 +139,108 @@ instance Functor ComponentM where
       return $! case result of
         Left err ->
           Left err
-        Right (a, deps) ->
-          Right (f a, deps)
+        Right (a, builds) ->
+          Right (f a, builds)
+
+--------------------
 
 instance Applicative ComponentM where
-  pure a =
-    ComponentM
-      $ return
-      $ Right (a, M.Hash.empty)
+  pure a = ComponentM $
+    return $ Right (a, M.Hash.empty)
 
-  (ComponentM f) <*> (ComponentM a) = ComponentM $ do
-    withAsync f $ \fAsync ->
-      withAsync a $ \aAsync -> do
-        fValue <- waitCatch fAsync
-        aValue <- waitCatch aAsync
-        case (fValue, aValue) of
-          ( Left fErr, Left aErr ) ->
-            return $ Left ( [fErr, aErr], M.Hash.empty )
+  (<*>) (ComponentM cf) (ComponentM ca) = ComponentM $ do
+    -- NOTE: We do not handle IO errors here because they are being managed in
+    -- the leafs; we don't expose the constructor of ComponentM
+    (rf, ra) <- concurrently cf ca
+    case (rf, ra) of
+      (Right (f, depsF), Right (a, depsA)) ->
+        return $ Right (f a, M.Hash.union depsF depsA)
 
-          ( Left fErr, Right (Left (aErr, aDepTable)) ) ->
-            return $ Left ( [fErr] <> aErr, aDepTable )
+      (Right (_, depsF), Left (errA, depsA)) ->
+        return $ Left (errA, M.Hash.union depsF depsA)
 
-          ( Left fErr, Right (Right (_, aDepTable)) ) ->
-            return $ Left ( [fErr], aDepTable )
+      (Left (errF, depsF), Right (_, depsA)) ->
+        return $ Left (errF, M.Hash.union depsF depsA)
+
+      (Left (errF, depsF), Left (errA, depsA)) ->
+        return $ Left (errF ++ errA, M.Hash.union depsF depsA)
 
 
-          ( Right (Left (fErr, fDepTable)), Left aErr ) ->
-            return $ Left ( fErr <> [aErr], fDepTable )
+--------------------
 
-          ( Right (Right (_, fDepTable)), Left aErr ) ->
-            return $ Left ( [aErr], fDepTable )
+appendDependency :: Description -> Build -> Build
+appendDependency depDesc build =
+  build {
+    buildDependencies =
+      S.insert depDesc (buildDependencies build)
+  }
 
-          ( Right (Left (fErr, fDepTable)), Right (Right (_, aDepTable)) ) ->
-            return $ Left ( fErr
-                          , fDepTable <> aDepTable
-                          )
-
-          ( Right (Left (fErr, fDepTable)), Right (Left (aErr, aDepTable)) ) ->
-            return $ Left ( fErr <> aErr
-                          , fDepTable <> aDepTable
-                          )
-
-          ( Right (Right (_, fDepTable)), Right (Left (aErr, aDepTable)) ) ->
-            return $ Left ( aErr
-                          , fDepTable <> aDepTable
-                          )
-
-          ( Right (Right (fVal, fDepTable)), Right (Right (aVal, aDepTable)) ) ->
-            return $ Right ( fVal aVal
-                           , fDepTable <> aDepTable
-                           )
+appendDependencies :: BuildTable -> BuildTable -> BuildTable
+appendDependencies fromBuildTable toBuildTable =
+  let
+    appendDependenciesToBuild build =
+      foldr appendDependency build (M.Hash.keys fromBuildTable)
+  in
+    -- First, we add all keys from fromBuildTable to all entries of toBuildTable
+    M.Hash.map appendDependenciesToBuild toBuildTable
+    -- Then, we join both fromBuildTable and toBuildTable
+    & M.Hash.union fromBuildTable
 
 instance Monad ComponentM where
-  return =
-    pure
+  return = pure
+  (>>=) (ComponentM ma) f = ComponentM $ do
+    resultA <- ma
+    case resultA of
+      Left (errA, depsA) ->
+        return $ Left (errA, depsA)
 
-  (ComponentM m) >>= f = ComponentM $ do
-    aResult <- m
-    case aResult of
-      Right (a, aDepTable) -> do
-        let
-          (ComponentM m1) = f a
+      Right (a, depsA) -> do
+        let (ComponentM mb) = f a
+        resultB <- mb
 
-        bResult <- try m1
+        case resultB of
+          Left (errB, depsB) ->
+            return $ Left (errB, appendDependencies depsA depsB)
 
-        case bResult of
-          -- There was an exception via the IO Monad
-          Left bErr ->
-            return $ Left ([bErr], aDepTable)
-
-          -- There was an exception either via `fail` or `throwM`
-          Right (Left (bErr, bDepTable)) ->
-            return
-            $ Left (bErr, joinDependencyTables aDepTable bDepTable)
-
-          Right (Right (b, bDepTable)) ->
-            return
-            $ Right (b, joinDependencyTables aDepTable bDepTable)
-
-
-      Left (aErr, aDepTable) ->
-        return $ Left (aErr, aDepTable)
-
-  fail str =
-    ComponentM
-      $ return
-      $ Left ([toException $! ComponentFailure (Text.pack str)], M.Hash.empty)
-
--- instance MonadFail ComponentM where
---   fail str =
---     ComponentM
---       $ return
---       $ Left ([toException $! ComponentFailure (Text.pack str)], M.Hash.empty)
+          Right (b, depsB) ->
+            return $ Right (b, appendDependencies depsA depsB)
 
 instance MonadThrow ComponentM where
   throwM e =
     ComponentM
       $ return
-      $ Left ([toException e], M.Hash.empty)
+      $ Left ([ComponentBuildFailure $ toException e], M.Hash.empty)
 
 instance MonadIO ComponentM where
   liftIO action = ComponentM $ do
-    result <- action
-    return $ Right (result, M.Hash.empty)
+    eresult <- try action
+    case eresult of
+      Left err -> return $ Left ([ComponentBuildFailure err], M.Hash.empty)
+      Right a -> return $ Right (a, M.Hash.empty)
 
 
--- | Represents the result of a `ComponentM` sub-routine, it contains a resource
--- record which can be recovered using `fromComponent` and a `Teardown`
--- sub-routine that can be executed using the `teardown` function.
-data Component a
-  = Component { componentResource :: !a
-              , componentTeardown :: !Teardown }
-  deriving (Generic)
+--------------------------------------------------------------------------------
 
--- | Fetches the resource of a `Component` returned by a `ComponentM`
--- sub-routine.
-fromComponent :: Component a -> a
-fromComponent =
-  componentResource
-{-# INLINE fromComponent #-}
+buildTableToOrderedList :: BuildTable -> [Build]
+buildTableToOrderedList buildTable =
+  let
+    buildGraphEdges :: [(Build, Description, [Description])]
+    buildGraphEdges =
+      M.Hash.foldrWithKey
+        (\k build acc -> (build, k, S.toList $ buildDependencies build):acc)
+        []
+        buildTable
 
-instance NFData a => NFData (Component a)
+    (componentGraph, lookupBuild) =
+      graphFromEdges' buildGraphEdges
 
-instance HasTeardown (Component a) where
-  getTeardown =
-    componentTeardown
+  in
+     map (\buildIndex ->
+            let (build, _, _) = lookupBuild buildIndex
+            in build
+         )
+         (topSort componentGraph)
+
+buildTableToTeardown :: Text -> BuildTable -> IO Teardown
+buildTableToTeardown appName buildTable =
+   newTeardown appName (map componentTeardown $ buildTableToOrderedList buildTable)

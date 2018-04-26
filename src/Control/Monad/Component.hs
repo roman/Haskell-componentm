@@ -15,21 +15,15 @@ module Control.Monad.Component
   -- * 'ComponentM' monad and runner
     ComponentM
   , runComponentM
-
-  -- * 'Component' record and functions
-  , Component
-  , fromComponent
+  , runComponentM1
 
   -- * 'Component' error record
   , ComponentError (..)
+  , ComponentRuntimeFailed(..)
+  , ComponentBuildFailed(..)
 
   -- * 'Teardown' functions
-  , Teardown
   , TeardownResult (..)
-  , runTeardown
-  , runTeardown_
-  , newTeardown
-  , getTeardown
 
   -- * Re-exports
   , throwM
@@ -41,8 +35,8 @@ module Control.Monad.Component
 
 import Control.Monad.Catch                    (throwM)
 import Control.Monad.Component.Internal.Core
-    (buildComponent, buildComponent_, runComponentM)
+    (buildComponent, buildComponent_, runComponentM, runComponentM1)
 import Control.Monad.Component.Internal.Types
-    (Component, ComponentError (..), ComponentM, fromComponent)
+    (ComponentError (..), ComponentM, ComponentRuntimeFailed(..), ComponentBuildFailed(..))
 import Control.Teardown
-    (Teardown, TeardownResult (..), newTeardown, runTeardown, runTeardown_, getTeardown)
+    (TeardownResult (..))
