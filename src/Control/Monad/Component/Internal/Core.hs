@@ -115,7 +115,7 @@ runComponentM1 !logFn !appName !(ComponentM buildFn) !appFn = mask $ \restore ->
 
     Right (resource, buildTable) -> do
       let buildList = buildTableToOrderedList buildTable
-      restore $ logFn $ ComponentBuilt $ BuildResult buildList
+      restore $ logFn $ ComponentBuilt $ BuildResult $ reverse buildList
 
       appTeardown    <- buildTableToTeardown appName buildTable
       appResult      <- tryAny $ restore $ appFn resource

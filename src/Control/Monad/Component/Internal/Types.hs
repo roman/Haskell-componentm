@@ -68,12 +68,12 @@ instance Pretty Build where
           []
 
     in
-      Pretty.hang 4
-      $ Pretty.hsep
-      $ [ Pretty.fill 3 (pretty statusSymbol)
-        , Pretty.fillBreak 10 (pretty componentDesc)
-        , Pretty.parens (pretty $ show buildElapsedTime)
-        ] <> errorInfo
+      Pretty.hang 2
+          $ Pretty.hsep
+          $ [ pretty statusSymbol
+            , pretty componentDesc
+            , Pretty.parens (pretty $ show buildElapsedTime)
+            ] <> errorInfo
 
 
 instance Display Build where
@@ -86,7 +86,9 @@ newtype BuildResult
 
 instance Pretty BuildResult where
   pretty (BuildResult builds) =
-    Pretty.vsep (map pretty builds)
+      pretty ("Application Initialized" :: Text)
+      <> Pretty.hardline
+      <> Pretty.vsep (map pretty builds)
 
 instance Display BuildResult where
   display buildResult =
@@ -102,7 +104,9 @@ instance Pretty ComponentEvent where
       ComponentBuilt buildResult ->
         pretty buildResult
       ComponentReleased teardownResult ->
-        pretty (show teardownResult)
+        "Application Teardown"
+        <> Pretty.hardline
+        <> pretty teardownResult
 
 instance Display ComponentEvent where
   display = displayShow . pretty
