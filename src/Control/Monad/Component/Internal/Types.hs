@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE DeriveGeneric     #-}
@@ -25,6 +26,12 @@ data ComponentError
   deriving (Generic, Show)
 
 instance Exception ComponentError
+
+data DuplicatedComponentKeyDetected
+  = DuplicatedComponentKeyDetected !Text
+  deriving (Generic, Show)
+
+instance Exception DuplicatedComponentKeyDetected
 
 -- | Failure raised when the application callback throws an exception
 data ComponentRuntimeFailed
@@ -148,6 +155,21 @@ instance Functor ComponentM where
 
 --------------------
 
+validateKeyDuplication
+  :: Monad m
+  => (HashMap Text v -> HashMap Text v -> HashMap Text v)
+  -> HashMap Text v
+  -> HashMap Text v
+  -> m (Either ([ComponentError], HashMap Text v) (HashMap Text v))
+validateKeyDuplication mergeFn a b =
+  case M.Hash.keys $ M.Hash.intersection a b of
+    [] -> return $ Right (mergeFn a b)
+    keys -> do
+      let
+        errors = map (ComponentBuildFailure . toException . DuplicatedComponentKeyDetected)
+                     keys
+      return (Left (errors, M.Hash.union a b))
+
 instance Applicative ComponentM where
   pure a = ComponentM $
     return $ Right (a, M.Hash.empty)
@@ -155,20 +177,31 @@ instance Applicative ComponentM where
   (<*>) (ComponentM cf) (ComponentM ca) = ComponentM $ do
     -- NOTE: We do not handle IO errors here because they are being managed in
     -- the leafs; we don't expose the constructor of ComponentM
+    let validateKeys =
+          validateKeyDuplication M.Hash.union
+
     (rf, ra) <- concurrently cf ca
     case (rf, ra) of
       (Right (f, depsF), Right (a, depsA)) ->
-        return $ Right (f a, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps  -> return $ Right (f a, deps)
+          Left (errors, deps) -> return $ Left (errors, deps)
+
 
       (Right (_, depsF), Left (errA, depsA)) ->
-        return $ Left (errA, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errA, deps)
+          Left (errors, deps) -> return $ Left (errA <> errors, deps)
 
       (Left (errF, depsF), Right (_, depsA)) ->
-        return $ Left (errF, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errF, deps)
+          Left (errors, deps) -> return $ Left (errF <> errors, deps)
 
       (Left (errF, depsF), Left (errA, depsA)) ->
-        return $ Left (errF ++ errA, M.Hash.union depsF depsA)
-
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errF, deps)
+          Left (errors, deps) -> return $ Left (errF <> errA <> errors, deps)
 
 --------------------
 
@@ -193,6 +226,9 @@ appendDependencies fromBuildTable toBuildTable =
 instance Monad ComponentM where
   return = pure
   (>>=) (ComponentM ma) f = ComponentM $ do
+    let validateKeys =
+          validateKeyDuplication appendDependencies
+
     resultA <- ma
     case resultA of
       Left (errA, depsA) ->
@@ -204,10 +240,14 @@ instance Monad ComponentM where
 
         case resultB of
           Left (errB, depsB) ->
-            return $ Left (errB, appendDependencies depsA depsB)
+            validateKeys depsA depsB >>= \case
+              Right deps -> return $ Left (errB, deps)
+              Left (errors, deps) -> return $ Left (errB <> errors, deps)
 
           Right (b, depsB) ->
-            return $ Right (b, appendDependencies depsA depsB)
+            validateKeys depsA depsB >>= \case
+              Right deps -> return $ Right (b, deps)
+              Left (errors, deps) -> return $ Left (errors, deps)
 
 instance MonadThrow ComponentM where
   throwM e =
