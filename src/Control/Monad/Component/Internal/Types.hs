@@ -21,31 +21,26 @@ import Control.Teardown (Teardown, TeardownResult, newTeardown)
 --------------------------------------------------------------------------------
 
 data ComponentError
-  = ComponentBuildFailure   !SomeException
-  | ComponentStartupFailure !Text !SomeException
+  -- | Failure raised when the given Application Callback throws an exception
+  = ComponentRuntimeFailed !SomeException !TeardownResult
+    -- | Failure raised when construction of ComponentM throws an exception
+  | ComponentBuildFailed ![ComponentBuildError] !TeardownResult
   deriving (Generic, Show)
 
 instance Exception ComponentError
 
-data DuplicatedComponentKeyDetected
-  = DuplicatedComponentKeyDetected !Text
+data ComponentBuildError
+  -- | Failure raised when using the same component key on a Component composition
+  = DuplicatedComponentKeyDetected !Description
+  -- | Failure raised when the allocation sub-routine of a Component fails with an exception
+  | ComponentAllocationFailed !Description !SomeException
+  -- | Failure raised when calling the 'throwM' when composing 'ComponentM' values
+  | ComponentErrorThrown !SomeException
+  -- | Failure raised when calling 'liftIO' and it fails
+  | ComponentIOLiftFailed !SomeException
   deriving (Generic, Show)
 
-instance Exception DuplicatedComponentKeyDetected
-
--- | Failure raised when the application callback throws an exception
-data ComponentRuntimeFailed
-  = ComponentRuntimeFailed !SomeException !TeardownResult
-  deriving (Generic, Show)
-
-instance Exception ComponentRuntimeFailed
-
--- | Failure raised when construction of ComponentM throws an exception
-data ComponentBuildFailed
-  = ComponentBuildFailed ![ComponentError] !TeardownResult
-  deriving (Generic, Show)
-
-instance Exception ComponentBuildFailed
+instance Exception ComponentBuildError
 
 type Description = Text
 
@@ -138,7 +133,7 @@ instance Display ComponentEvent where
 --------------------
 
 newtype ComponentM a
-  = ComponentM (IO (Either ([ComponentError], BuildTable)
+  = ComponentM (IO (Either ([ComponentBuildError], BuildTable)
                            (a, BuildTable)))
 
 --------------------
@@ -160,14 +155,13 @@ validateKeyDuplication
   => (HashMap Text v -> HashMap Text v -> HashMap Text v)
   -> HashMap Text v
   -> HashMap Text v
-  -> m (Either ([ComponentError], HashMap Text v) (HashMap Text v))
+  -> m (Either ([ComponentBuildError], HashMap Text v) (HashMap Text v))
 validateKeyDuplication mergeFn a b =
   case M.Hash.keys $ M.Hash.intersection a b of
     [] -> return $ Right (mergeFn a b)
     keys -> do
       let
-        errors = map (ComponentBuildFailure . toException . DuplicatedComponentKeyDetected)
-                     keys
+        errors = map (DuplicatedComponentKeyDetected) keys
       return (Left (errors, M.Hash.union a b))
 
 instance Applicative ComponentM where
@@ -200,7 +194,7 @@ instance Applicative ComponentM where
 
       (Left (errF, depsF), Left (errA, depsA)) ->
         validateKeys depsF depsA >>= \case
-          Right deps -> return $ Left (errF, deps)
+          Right deps -> return $ Left (errF <> errA, deps)
           Left (errors, deps) -> return $ Left (errF <> errA <> errors, deps)
 
 --------------------
@@ -253,13 +247,13 @@ instance MonadThrow ComponentM where
   throwM e =
     ComponentM
       $ return
-      $ Left ([ComponentBuildFailure $ toException e], M.Hash.empty)
+      $ Left ([ComponentErrorThrown $ toException e], M.Hash.empty)
 
 instance MonadIO ComponentM where
   liftIO action = ComponentM $ do
     eresult <- try action
     case eresult of
-      Left err -> return $ Left ([ComponentBuildFailure err], M.Hash.empty)
+      Left err -> return $ Left ([ComponentIOLiftFailed err], M.Hash.empty)
       Right a -> return $ Right (a, M.Hash.empty)
 
 

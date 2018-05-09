@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Control.Monad.Component.Internal.Core where
@@ -42,7 +42,7 @@ buildComponent_ !componentDesc !ma =
                     }
           buildTable =
             HashMap.singleton componentDesc build
-        return $ Left ([ComponentStartupFailure componentDesc err], buildTable)
+        return $ Left ([ComponentAllocationFailed componentDesc err], buildTable)
 
       Right output -> do
         let
@@ -94,7 +94,7 @@ buildComponent !componentDesc !construct !release !transform = do
       result  <- restore $ try $ transform resource
       return $ case result of
         Left err ->
-          (Left $ ComponentStartupFailure componentDesc err, resourceTeardown)
+          (Left $ ComponentAllocationFailed componentDesc err, resourceTeardown)
         Right output ->
           (Right output, resourceTeardown)
 

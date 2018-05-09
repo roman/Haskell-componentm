@@ -110,8 +110,8 @@ tests =
             -- 3. allocated component three (notice, error happens once allocation is done)
             assertEqual "There should be three toredown resources" 3 (toredownCount teardownResult)
 
-          Right _ ->
-            assertFailure "expected error, but did not happen"
+          _ ->
+            assertFailure $ "expected error, but did not happen, " <> show result
 
     , testCase "component construction allows throwM calls" $ do
         callCountRef <- newIORef (0 :: Int)
@@ -137,7 +137,7 @@ tests =
 
         result <- try $ SUT.runComponentM "test application" componentAction return
         case result of
-          Left (SUT.ComponentBuildFailed [SUT.ComponentBuildFailure err] _teardownResult) -> do
+          Left (SUT.ComponentBuildFailed [SUT.ComponentErrorThrown err] _teardownResult) -> do
             callCount <- readIORef callCountRef
             assertEqual "expected introduced error, got different one"
                         (Just $ ErrorCall "failing via MonadThrow")
@@ -165,6 +165,57 @@ tests =
         masking <- takeMVar maskingVar
 
         assertEqual "App callback is always in unmasked state" MaskedUninterruptible masking
+    ]
+
+  , testGroup "Duplicate component names"
+    [
+      testCase "fails with an exception" $ do
+        callCountRef <- newIORef (0 :: Int)
+
+        let
+          alloc = return ()
+          release = const $ return ()
+
+          componentOne =
+            SUT.buildComponent "one" alloc release $ \_ -> do
+              modifyIORef callCountRef (+1)
+              return ()
+
+          componentTwo =
+            SUT.buildComponent "two" alloc release $ \_ -> do
+              modifyIORef callCountRef (+1)
+              return ()
+
+          componentThree =
+            SUT.buildComponent_ "three" (return ())
+
+
+          componentAction = do
+            componentOne
+            void componentTwo
+            void componentThree
+            void componentThree
+
+        result <- try $ SUT.runComponentM "test application" componentAction (const $ return ())
+        case result of
+          Left (SUT.ComponentBuildFailed appErr teardownResult) -> do
+            callCount <- readIORef callCountRef
+            case appErr of
+              [SUT.DuplicatedComponentKeyDetected componentName] ->
+                assertEqual "should report duplicated component name" "three" componentName
+              _ ->
+                assertFailure $ "expecting single component build error error; got: " <> show appErr
+
+            assertEqual "got more than one two valid components" 2 callCount
+
+            -- 1. component one
+            -- 2. component two
+            -- 3. allocated component three (notice, error happens once allocation is done)
+            assertEqual "There should be three toredown resources" 3 (toredownCount teardownResult)
+
+          _ ->
+            assertFailure "expected error, but did not happen"
+
     ]
 
   , testGroup "Monad"
@@ -257,8 +308,8 @@ tests =
 
         result <- try $ SUT.runComponentM "test application" componentAction return
         case result of
-          Left (SUT.ComponentBuildFailed [ SUT.ComponentStartupFailure _desc2 err2
-                                         , SUT.ComponentStartupFailure _desc3 err3
+          Left (SUT.ComponentBuildFailed [ SUT.ComponentAllocationFailed _desc2 err2
+                                         , SUT.ComponentAllocationFailed _desc3 err3
                                          ] _teardownResult) -> do
 
             assertEqual "expected introduced error, got different one"
@@ -299,4 +350,41 @@ tests =
         assertBool "expecting t2 to be different than t3" (t2 /= t3)
         assertBool "expecting t1 to be different than t3" (t1 /= t3)
     ]
+
+  , testGroup "MonadIO"
+    [
+      testCase "wraps IO exceptions with info" $ do
+        callCountRef <- newIORef (0 :: Int)
+
+        let
+          alloc = return ()
+          release = const $ do
+            modifyIORef callCountRef (+1)
+            return ()
+
+          componentOne =
+            SUT.buildComponent "one" alloc release $ \_ ->
+              return ()
+
+          componentTwo =
+            SUT.buildComponent_ "two" $ return ()
+
+          componentAction = do
+            componentOne
+            void $ liftIO $ throwIO (ErrorCall "failing on liftIO")
+            componentTwo
+
+        result <- try $ SUT.runComponentM "test application" componentAction return
+        case result of
+          Left (SUT.ComponentBuildFailed [SUT.ComponentIOLiftFailed ex] teardownResult) -> do
+            releaseCount <- readIORef callCountRef
+            assertEqual "should have called the release of component one, but didn't" 1 releaseCount
+            assertEqual "should have called the release of component one, but didn't" 1 (toredownCount teardownResult)
+            assertEqual "should have reported the liftIO error, but didn't"
+                        (Just $ ErrorCall "failing on liftIO")
+                        (fromException ex)
+          _ ->
+            assertFailure $ "expecting to get component build failed error, got instead: " <> show result
+    ]
+
   ]

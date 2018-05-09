@@ -19,8 +19,7 @@ module Control.Monad.Component
 
   -- * 'Component' error record
   , ComponentError (..)
-  , ComponentRuntimeFailed(..)
-  , ComponentBuildFailed(..)
+  , ComponentBuildError (..)
 
   -- * 'Teardown' functions
   , TeardownResult (..)
@@ -37,6 +36,6 @@ import Control.Monad.Catch                    (throwM)
 import Control.Monad.Component.Internal.Core
     (buildComponent, buildComponent_, runComponentM, runComponentM1)
 import Control.Monad.Component.Internal.Types
-    (ComponentError (..), ComponentM, ComponentRuntimeFailed(..), ComponentBuildFailed(..))
+    (ComponentBuildError (..), ComponentError (..), ComponentM)
 import Control.Teardown
     (TeardownResult (..))
