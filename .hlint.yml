@@ -47,6 +47,7 @@
 
 # Ignore some builtin hints
 - ignore: {name: Use String}
+- ignore: {name: Reduce duplication, within: ComponentTest}
 # - ignore: {name: Use let}
 # - ignore: {name: Use const, within: SpecialModule} # Only within certain modules
 

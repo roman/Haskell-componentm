@@ -1,22 +1,23 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Control.Monad.Component.Internal.Types where
 
-import RIO
-import RIO.Time (NominalDiffTime)
-import qualified RIO.Set as S
-import qualified RIO.HashMap as M.Hash
+import           RIO
+import qualified RIO.HashMap               as M.Hash
+import qualified RIO.Set                   as S
+import           RIO.Time                  (NominalDiffTime)
 
-import Data.Text.Prettyprint.Doc ((<+>), Pretty, pretty)
+import           Data.Text.Prettyprint.Doc (Pretty, pretty, (<+>))
 import qualified Data.Text.Prettyprint.Doc as Pretty
 
-import           Data.Graph (graphFromEdges', topSort)
-import           Control.Monad.Catch    (MonadThrow (..))
+import           Control.Monad.Catch       (MonadThrow (..))
+import           Data.Graph                (graphFromEdges', topSort)
 
-import Control.Teardown (Teardown, TeardownResult, newTeardown)
+import           Control.Teardown          (Teardown, TeardownResult,
+                                            newTeardown)
 
 --------------------------------------------------------------------------------
 
@@ -46,11 +47,11 @@ type Description = Text
 
 data Build
   = Build {
-      componentDesc      :: !Description
-    , componentTeardown  :: !Teardown
-    , buildElapsedTime   :: !NominalDiffTime
-    , buildFailure       :: !(Maybe SomeException)
-    , buildDependencies  :: !(Set Description)
+      componentDesc     :: !Description
+    , componentTeardown :: !Teardown
+    , buildElapsedTime  :: !NominalDiffTime
+    , buildFailure      :: !(Maybe SomeException)
+    , buildDependencies :: !(Set Description)
     }
   deriving (Generic)
 
@@ -155,13 +156,16 @@ validateKeyDuplication
   => (HashMap Text v -> HashMap Text v -> HashMap Text v)
   -> HashMap Text v
   -> HashMap Text v
-  -> m (Either ([ComponentBuildError], HashMap Text v) (HashMap Text v))
+  -> m
+       ( Either
+           ([ComponentBuildError], HashMap Text v)
+           (HashMap Text v)
+       )
 validateKeyDuplication mergeFn a b =
   case M.Hash.keys $ M.Hash.intersection a b of
-    [] -> return $ Right (mergeFn a b)
+    []   -> return $ Right (mergeFn a b)
     keys -> do
-      let
-        errors = map (DuplicatedComponentKeyDetected) keys
+      let errors = map DuplicatedComponentKeyDetected keys
       return (Left (errors, M.Hash.union a b))
 
 instance Applicative ComponentM where
@@ -201,21 +205,17 @@ instance Applicative ComponentM where
 
 appendDependency :: Description -> Build -> Build
 appendDependency depDesc build =
-  build {
-    buildDependencies =
-      S.insert depDesc (buildDependencies build)
-  }
+  build { buildDependencies = S.insert depDesc (buildDependencies build) }
 
 appendDependencies :: BuildTable -> BuildTable -> BuildTable
 appendDependencies fromBuildTable toBuildTable =
-  let
-    appendDependenciesToBuild build =
-      foldr appendDependency build (M.Hash.keys fromBuildTable)
+  let appendDependenciesToBuild build =
+        foldr appendDependency build (M.Hash.keys fromBuildTable)
   in
     -- First, we add all keys from fromBuildTable to all entries of toBuildTable
-    M.Hash.map appendDependenciesToBuild toBuildTable
     -- Then, we join both fromBuildTable and toBuildTable
-    & M.Hash.union fromBuildTable
+      M.Hash.map appendDependenciesToBuild toBuildTable
+        & M.Hash.union fromBuildTable
 
 instance Monad ComponentM where
   return = pure
@@ -254,31 +254,25 @@ instance MonadIO ComponentM where
     eresult <- try action
     case eresult of
       Left err -> return $ Left ([ComponentIOLiftFailed err], M.Hash.empty)
-      Right a -> return $ Right (a, M.Hash.empty)
+      Right a  -> return $ Right (a, M.Hash.empty)
 
 
 --------------------------------------------------------------------------------
 
 buildTableToOrderedList :: BuildTable -> [Build]
 buildTableToOrderedList buildTable =
-  let
-    buildGraphEdges :: [(Build, Description, [Description])]
-    buildGraphEdges =
-      M.Hash.foldrWithKey
-        (\k build acc -> (build, k, S.toList $ buildDependencies build):acc)
+  let buildGraphEdges :: [(Build, Description, [Description])]
+      buildGraphEdges = M.Hash.foldrWithKey
+        (\k build acc -> (build, k, S.toList $ buildDependencies build) : acc)
         []
         buildTable
 
-    (componentGraph, lookupBuild) =
-      graphFromEdges' buildGraphEdges
-
-  in
-     map (\buildIndex ->
-            let (build, _, _) = lookupBuild buildIndex
-            in build
-         )
-         (topSort componentGraph)
+      (componentGraph, lookupBuild) = graphFromEdges' buildGraphEdges
+  in  map
+        (\buildIndex -> let (build, _, _) = lookupBuild buildIndex in build)
+        (topSort componentGraph)
 
 buildTableToTeardown :: Text -> BuildTable -> IO Teardown
-buildTableToTeardown appName buildTable =
-   newTeardown appName (map componentTeardown $ buildTableToOrderedList buildTable)
+buildTableToTeardown appName buildTable = newTeardown
+  appName
+  (map componentTeardown $ buildTableToOrderedList buildTable)
