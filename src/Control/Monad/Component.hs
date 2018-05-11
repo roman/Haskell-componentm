@@ -19,8 +19,7 @@ module Control.Monad.Component
 
   -- * 'Component' error record
   , ComponentError (..)
-  , ComponentRuntimeFailed(..)
-  , ComponentBuildFailed(..)
+  , ComponentBuildError (..)
 
   -- * 'Teardown' functions
   , TeardownResult (..)
@@ -33,10 +32,12 @@ module Control.Monad.Component
   , buildComponent_
   ) where
 
-import Control.Monad.Catch                    (throwM)
-import Control.Monad.Component.Internal.Core
-    (buildComponent, buildComponent_, runComponentM, runComponentM1)
-import Control.Monad.Component.Internal.Types
-    (ComponentError (..), ComponentM, ComponentRuntimeFailed(..), ComponentBuildFailed(..))
-import Control.Teardown
-    (TeardownResult (..))
+import           Control.Monad.Catch                    (throwM)
+import           Control.Monad.Component.Internal.Core  (buildComponent,
+                                                         buildComponent_,
+                                                         runComponentM,
+                                                         runComponentM1)
+import           Control.Monad.Component.Internal.Types (ComponentBuildError (..),
+                                                         ComponentError (..),
+                                                         ComponentM)
+import           Control.Teardown                       (TeardownResult (..))

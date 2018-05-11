@@ -1,54 +1,57 @@
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Control.Monad.Component.Internal.Types where
 
-import RIO
-import RIO.Time (NominalDiffTime)
-import qualified RIO.Set as S
-import qualified RIO.HashMap as M.Hash
+import           RIO
+import qualified RIO.HashMap               as M.Hash
+import qualified RIO.Set                   as S
+import           RIO.Time                  (NominalDiffTime)
 
-import Data.Text.Prettyprint.Doc ((<+>), Pretty, pretty)
+import           Data.Text.Prettyprint.Doc (Pretty, pretty, (<+>))
 import qualified Data.Text.Prettyprint.Doc as Pretty
 
-import           Data.Graph (graphFromEdges', topSort)
-import           Control.Monad.Catch    (MonadThrow (..))
+import           Control.Monad.Catch       (MonadThrow (..))
+import           Data.Graph                (graphFromEdges', topSort)
 
-import Control.Teardown (Teardown, TeardownResult, newTeardown)
+import           Control.Teardown          (Teardown, TeardownResult,
+                                            newTeardown)
 
 --------------------------------------------------------------------------------
 
 data ComponentError
-  = ComponentBuildFailure   !SomeException
-  | ComponentStartupFailure !Text !SomeException
+  -- | Failure raised when the given Application Callback throws an exception
+  = ComponentRuntimeFailed !SomeException !TeardownResult
+    -- | Failure raised when construction of ComponentM throws an exception
+  | ComponentBuildFailed ![ComponentBuildError] !TeardownResult
   deriving (Generic, Show)
 
 instance Exception ComponentError
 
--- | Failure raised when the application callback throws an exception
-data ComponentRuntimeFailed
-  = ComponentRuntimeFailed !SomeException !TeardownResult
+data ComponentBuildError
+  -- | Failure raised when using the same component key on a Component composition
+  = DuplicatedComponentKeyDetected !Description
+  -- | Failure raised when the allocation sub-routine of a Component fails with an exception
+  | ComponentAllocationFailed !Description !SomeException
+  -- | Failure raised when calling the 'throwM' when composing 'ComponentM' values
+  | ComponentErrorThrown !SomeException
+  -- | Failure raised when calling 'liftIO' and it fails
+  | ComponentIOLiftFailed !SomeException
   deriving (Generic, Show)
 
-instance Exception ComponentRuntimeFailed
-
--- | Failure raised when construction of ComponentM throws an exception
-data ComponentBuildFailed
-  = ComponentBuildFailed ![ComponentError] !TeardownResult
-  deriving (Generic, Show)
-
-instance Exception ComponentBuildFailed
+instance Exception ComponentBuildError
 
 type Description = Text
 
 data Build
   = Build {
-      componentDesc      :: !Description
-    , componentTeardown  :: !Teardown
-    , buildElapsedTime   :: !NominalDiffTime
-    , buildFailure       :: !(Maybe SomeException)
-    , buildDependencies  :: !(Set Description)
+      componentDesc     :: !Description
+    , componentTeardown :: !Teardown
+    , buildElapsedTime  :: !NominalDiffTime
+    , buildFailure      :: !(Maybe SomeException)
+    , buildDependencies :: !(Set Description)
     }
   deriving (Generic)
 
@@ -68,12 +71,12 @@ instance Pretty Build where
           []
 
     in
-      Pretty.hang 4
-      $ Pretty.hsep
-      $ [ Pretty.fill 3 (pretty statusSymbol)
-        , Pretty.fillBreak 10 (pretty componentDesc)
-        , Pretty.parens (pretty $ show buildElapsedTime)
-        ] <> errorInfo
+      Pretty.hang 2
+          $ Pretty.hsep
+          $ [ pretty statusSymbol
+            , pretty componentDesc
+            , Pretty.parens (pretty $ show buildElapsedTime)
+            ] <> errorInfo
 
 
 instance Display Build where
@@ -86,7 +89,9 @@ newtype BuildResult
 
 instance Pretty BuildResult where
   pretty (BuildResult builds) =
-    Pretty.vsep (map pretty builds)
+      pretty ("Application Initialized" :: Text)
+      <> Pretty.hardline
+      <> Pretty.vsep (map pretty builds)
 
 instance Display BuildResult where
   display buildResult =
@@ -102,7 +107,9 @@ instance Pretty ComponentEvent where
       ComponentBuilt buildResult ->
         pretty buildResult
       ComponentReleased teardownResult ->
-        pretty (show teardownResult)
+        "Application Teardown"
+        <> Pretty.hardline
+        <> pretty teardownResult
 
 instance Display ComponentEvent where
   display = displayShow . pretty
@@ -127,7 +134,7 @@ instance Display ComponentEvent where
 --------------------
 
 newtype ComponentM a
-  = ComponentM (IO (Either ([ComponentError], BuildTable)
+  = ComponentM (IO (Either ([ComponentBuildError], BuildTable)
                            (a, BuildTable)))
 
 --------------------
@@ -144,6 +151,23 @@ instance Functor ComponentM where
 
 --------------------
 
+validateKeyDuplication
+  :: Monad m
+  => (HashMap Text v -> HashMap Text v -> HashMap Text v)
+  -> HashMap Text v
+  -> HashMap Text v
+  -> m
+       ( Either
+           ([ComponentBuildError], HashMap Text v)
+           (HashMap Text v)
+       )
+validateKeyDuplication mergeFn a b =
+  case M.Hash.keys $ M.Hash.intersection a b of
+    []   -> return $ Right (mergeFn a b)
+    keys -> do
+      let errors = map DuplicatedComponentKeyDetected keys
+      return (Left (errors, M.Hash.union a b))
+
 instance Applicative ComponentM where
   pure a = ComponentM $
     return $ Right (a, M.Hash.empty)
@@ -151,44 +175,54 @@ instance Applicative ComponentM where
   (<*>) (ComponentM cf) (ComponentM ca) = ComponentM $ do
     -- NOTE: We do not handle IO errors here because they are being managed in
     -- the leafs; we don't expose the constructor of ComponentM
+    let validateKeys =
+          validateKeyDuplication M.Hash.union
+
     (rf, ra) <- concurrently cf ca
     case (rf, ra) of
       (Right (f, depsF), Right (a, depsA)) ->
-        return $ Right (f a, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps  -> return $ Right (f a, deps)
+          Left (errors, deps) -> return $ Left (errors, deps)
+
 
       (Right (_, depsF), Left (errA, depsA)) ->
-        return $ Left (errA, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errA, deps)
+          Left (errors, deps) -> return $ Left (errA <> errors, deps)
 
       (Left (errF, depsF), Right (_, depsA)) ->
-        return $ Left (errF, M.Hash.union depsF depsA)
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errF, deps)
+          Left (errors, deps) -> return $ Left (errF <> errors, deps)
 
       (Left (errF, depsF), Left (errA, depsA)) ->
-        return $ Left (errF ++ errA, M.Hash.union depsF depsA)
-
+        validateKeys depsF depsA >>= \case
+          Right deps -> return $ Left (errF <> errA, deps)
+          Left (errors, deps) -> return $ Left (errF <> errA <> errors, deps)
 
 --------------------
 
 appendDependency :: Description -> Build -> Build
 appendDependency depDesc build =
-  build {
-    buildDependencies =
-      S.insert depDesc (buildDependencies build)
-  }
+  build { buildDependencies = S.insert depDesc (buildDependencies build) }
 
 appendDependencies :: BuildTable -> BuildTable -> BuildTable
 appendDependencies fromBuildTable toBuildTable =
-  let
-    appendDependenciesToBuild build =
-      foldr appendDependency build (M.Hash.keys fromBuildTable)
+  let appendDependenciesToBuild build =
+        foldr appendDependency build (M.Hash.keys fromBuildTable)
   in
     -- First, we add all keys from fromBuildTable to all entries of toBuildTable
-    M.Hash.map appendDependenciesToBuild toBuildTable
     -- Then, we join both fromBuildTable and toBuildTable
-    & M.Hash.union fromBuildTable
+      M.Hash.map appendDependenciesToBuild toBuildTable
+        & M.Hash.union fromBuildTable
 
 instance Monad ComponentM where
   return = pure
   (>>=) (ComponentM ma) f = ComponentM $ do
+    let validateKeys =
+          validateKeyDuplication appendDependencies
+
     resultA <- ma
     case resultA of
       Left (errA, depsA) ->
@@ -200,47 +234,45 @@ instance Monad ComponentM where
 
         case resultB of
           Left (errB, depsB) ->
-            return $ Left (errB, appendDependencies depsA depsB)
+            validateKeys depsA depsB >>= \case
+              Right deps -> return $ Left (errB, deps)
+              Left (errors, deps) -> return $ Left (errB <> errors, deps)
 
           Right (b, depsB) ->
-            return $ Right (b, appendDependencies depsA depsB)
+            validateKeys depsA depsB >>= \case
+              Right deps -> return $ Right (b, deps)
+              Left (errors, deps) -> return $ Left (errors, deps)
 
 instance MonadThrow ComponentM where
   throwM e =
     ComponentM
       $ return
-      $ Left ([ComponentBuildFailure $ toException e], M.Hash.empty)
+      $ Left ([ComponentErrorThrown $ toException e], M.Hash.empty)
 
 instance MonadIO ComponentM where
   liftIO action = ComponentM $ do
     eresult <- try action
     case eresult of
-      Left err -> return $ Left ([ComponentBuildFailure err], M.Hash.empty)
-      Right a -> return $ Right (a, M.Hash.empty)
+      Left err -> return $ Left ([ComponentIOLiftFailed err], M.Hash.empty)
+      Right a  -> return $ Right (a, M.Hash.empty)
 
 
 --------------------------------------------------------------------------------
 
 buildTableToOrderedList :: BuildTable -> [Build]
 buildTableToOrderedList buildTable =
-  let
-    buildGraphEdges :: [(Build, Description, [Description])]
-    buildGraphEdges =
-      M.Hash.foldrWithKey
-        (\k build acc -> (build, k, S.toList $ buildDependencies build):acc)
+  let buildGraphEdges :: [(Build, Description, [Description])]
+      buildGraphEdges = M.Hash.foldrWithKey
+        (\k build acc -> (build, k, S.toList $ buildDependencies build) : acc)
         []
         buildTable
 
-    (componentGraph, lookupBuild) =
-      graphFromEdges' buildGraphEdges
-
-  in
-     map (\buildIndex ->
-            let (build, _, _) = lookupBuild buildIndex
-            in build
-         )
-         (topSort componentGraph)
+      (componentGraph, lookupBuild) = graphFromEdges' buildGraphEdges
+  in  map
+        (\buildIndex -> let (build, _, _) = lookupBuild buildIndex in build)
+        (topSort componentGraph)
 
 buildTableToTeardown :: Text -> BuildTable -> IO Teardown
-buildTableToTeardown appName buildTable =
-   newTeardown appName (map componentTeardown $ buildTableToOrderedList buildTable)
+buildTableToTeardown appName buildTable = newTeardown
+  appName
+  (map componentTeardown $ buildTableToOrderedList buildTable)
