@@ -22,16 +22,14 @@ tests = testGroup
     [ testCase "it releases previously allocated resources" $ do
         callCountRef <- newIORef (0 :: Int)
 
-        let alloc        = return ()
-            release      = const $ return ()
-
-            componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
+        let alloc = do
               modifyIORef callCountRef (+ 1)
               return ()
+            release         = const $ return ()
 
-            componentTwo = SUT.buildComponent "two" alloc release $ \_ -> do
-              modifyIORef callCountRef (+ 1)
-              return ()
+            componentOne    = SUT.buildComponent "one" alloc release
+
+            componentTwo    = SUT.buildComponent "two" alloc release
 
             componentThree  = SUT.buildComponent_ "three" (threadDelay 10100100)
 
@@ -60,31 +58,29 @@ tests = testGroup
     [ testCase "it releases previously allocated resources" $ do
       callCountRef <- newIORef (0 :: Int)
 
-      let alloc        = return ()
-          release      = const $ return ()
+      let
+        alloc = do
+          modifyIORef callCountRef (+ 1)
+          return ()
+        release        = const $ return ()
 
-          componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
-            modifyIORef callCountRef (+ 1)
-            return ()
+        componentOne   = SUT.buildComponent "one" alloc release
 
-          componentTwo = SUT.buildComponent "two" alloc release $ \_ -> do
-            modifyIORef callCountRef (+ 1)
-            return ()
+        componentTwo   = SUT.buildComponent "two" alloc release
 
-          componentThree = SUT.buildComponent
-            "three"
-            alloc
-            release
-            (const $ throwIO (ErrorCall "failing two"))
+        componentThree = SUT.buildComponent
+          "three"
+          (throwIO (ErrorCall "failing three"))
+          release
 
-          componentFour =
-            SUT.buildComponent_ "four" (throwIO $ ErrorCall "failing three")
+        componentFour =
+          SUT.buildComponent_ "four" (throwIO $ ErrorCall "failing four")
 
-          componentAction = do
-            componentOne
-            void componentTwo
-            void componentThree
-            componentFour
+        componentAction = do
+          componentOne
+          void componentTwo
+          void componentThree
+          componentFour
 
       result <- try $ SUT.runComponentM "test application"
                                         componentAction
@@ -106,16 +102,14 @@ tests = testGroup
     , testCase "component construction allows throwM calls" $ do
       callCountRef <- newIORef (0 :: Int)
 
-      let alloc        = return ()
-          release      = const $ return ()
-
-          componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
+      let alloc = do
             modifyIORef callCountRef (+ 1)
             return ()
+          release         = const $ return ()
 
-          componentTwo = SUT.buildComponent "two" alloc release $ \_ -> do
-            modifyIORef callCountRef (+ 1)
-            return ()
+          componentOne    = SUT.buildComponent "one" alloc release
+
+          componentTwo    = SUT.buildComponent "two" alloc release
 
           componentAction = do
             componentOne
@@ -146,7 +140,7 @@ tests = testGroup
         maskingVar <- newEmptyMVar
         let alloc = return ()
             release _ = getMaskingState >>= putMVar maskingVar
-            componentOne = SUT.buildComponent "one" alloc release return
+            componentOne = SUT.buildComponent "one" alloc release
 
         SUT.runComponentM "app" componentOne return
         masking <- takeMVar maskingVar
@@ -160,16 +154,14 @@ tests = testGroup
     [ testCase "fails with an exception" $ do
         callCountRef <- newIORef (0 :: Int)
 
-        let alloc        = return ()
-            release      = const $ return ()
-
-            componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
+        let alloc = do
               modifyIORef callCountRef (+ 1)
               return ()
+            release         = const $ return ()
 
-            componentTwo = SUT.buildComponent "two" alloc release $ \_ -> do
-              modifyIORef callCountRef (+ 1)
-              return ()
+            componentOne    = SUT.buildComponent "one" alloc release
+
+            componentTwo    = SUT.buildComponent "two" alloc release
 
             componentThree  = SUT.buildComponent_ "three" (return ())
 
@@ -212,16 +204,14 @@ tests = testGroup
     [ testCase "aggregates multiple component teardown values" $ do
       callCountRef <- newIORef (0 :: Int)
 
-      let alloc        = return ()
-          release      = const $ return ()
-
-          componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
+      let alloc = do
             modifyIORef callCountRef (+ 1)
             return ()
+          release         = const $ return ()
 
-          componentTwo = SUT.buildComponent "two" alloc release $ \_ -> do
-            modifyIORef callCountRef (+ 1)
-            return ()
+          componentOne    = SUT.buildComponent "one" alloc release
+
+          componentTwo    = SUT.buildComponent "two" alloc release
 
           componentThree  = SUT.buildComponent_ "three" $ return ()
 
@@ -263,19 +253,20 @@ tests = testGroup
       callCountRef <- newIORef (0 :: Int)
 
       let
-        alloc        = return ()
-        release      = const $ return ()
-
-        componentOne = SUT.buildComponent "one" alloc release $ \_ -> do
+        alloc = do
           modifyIORef callCountRef (+ 1)
           return ()
+        release      = const $ return ()
+
+        componentOne = SUT.buildComponent "one" alloc release
 
         componentTwo =
           SUT.buildComponent_ "two" $ throwIO (ErrorCall "failing two")
 
-        componentThree = SUT.buildComponent "three" alloc release $ \_ -> do
-          void $ throwIO (ErrorCall "failing three")
-          return ()
+        componentThree = SUT.buildComponent
+          "three"
+          (throwIO (ErrorCall "failing three"))
+          release
 
         componentAction = componentOne *> componentTwo *> componentThree
 
@@ -327,21 +318,19 @@ tests = testGroup
     [ testCase "wraps IO exceptions with info" $ do
         callCountRef <- newIORef (0 :: Int)
 
-        let
-          alloc   = return ()
-          release = const $ do
-            modifyIORef callCountRef (+ 1)
-            return ()
+        let alloc   = return ()
+            release = const $ do
+              modifyIORef callCountRef (+ 1)
+              return ()
 
-          componentOne =
-            SUT.buildComponent "one" alloc release $ \_ -> return ()
+            componentOne    = SUT.buildComponent "one" alloc release
 
-          componentTwo    = SUT.buildComponent_ "two" $ return ()
+            componentTwo    = SUT.buildComponent_ "two" $ return ()
 
-          componentAction = do
-            componentOne
-            void $ liftIO $ throwIO (ErrorCall "failing on liftIO")
-            componentTwo
+            componentAction = do
+              componentOne
+              void $ liftIO $ throwIO (ErrorCall "failing on liftIO")
+              componentTwo
 
         result <- try
           $ SUT.runComponentM "test application" componentAction return

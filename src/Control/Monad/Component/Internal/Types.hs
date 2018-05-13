@@ -3,7 +3,17 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Control.Monad.Component.Internal.Types where
+module Control.Monad.Component.Internal.Types
+  ( ComponentError (..)
+  , ComponentBuildError (..)
+  , ComponentM (..)
+  , Build (..)
+  , BuildResult (..)
+  , TeardownResult
+  , ComponentEvent (..)
+  , buildTableToOrderedList
+  , buildTableToTeardown
+  ) where
 
 import           RIO
 import qualified RIO.HashMap               as M.Hash
@@ -21,23 +31,40 @@ import           Control.Teardown          (Teardown, TeardownResult,
 
 --------------------------------------------------------------------------------
 
+-- | Exception thrown by the 'runComponentM' family of functions
 data ComponentError
-  -- | Failure raised when the given Application Callback throws an exception
-  = ComponentRuntimeFailed !SomeException !TeardownResult
-    -- | Failure raised when construction of ComponentM throws an exception
-  | ComponentBuildFailed ![ComponentBuildError] !TeardownResult
+    -- | Failure raised when the Application Callback given to a 'runComponentM'
+    -- function throws an exception
+  = ComponentRuntimeFailed
+    {
+      -- | Exception that was originally thrown by the Application Callback
+      componentErrorOriginalException :: !SomeException
+      -- | Result from the execution allocated resources teardown
+    , componentErrorTeardownResult    :: !TeardownResult
+    }
+    -- | Failure raised when execution of 'ComponentM' throws an exception
+  | ComponentBuildFailed
+    {
+      -- | Exceptions thrown by 'IO' sub-routines used when constructing
+      -- 'ComponentM' values (e.g. 'buildComponent')
+      componentErrorBuildErrors    :: ![ComponentBuildError]
+      -- | Result from the execution allocated resources teardown
+    , componentErrorTeardownResult :: !TeardownResult
+    }
   deriving (Generic, Show)
 
 instance Exception ComponentError
 
+-- | Exception raised on the execution of 'IO' sub-routines used when
+-- constructing 'ComponentM' values (e.g. 'buildComponent')
 data ComponentBuildError
-  -- | Failure raised when using the same component key on a Component composition
+  -- | Failure thrown when using the same component key on a Component composition
   = DuplicatedComponentKeyDetected !Description
-  -- | Failure raised when the allocation sub-routine of a Component fails with an exception
+  -- | Failure thrown when the allocation sub-routine of a Component fails with an exception
   | ComponentAllocationFailed !Description !SomeException
-  -- | Failure raised when calling the 'throwM' when composing 'ComponentM' values
+  -- | Failure thrown when calling the 'throwM' when composing 'ComponentM' values
   | ComponentErrorThrown !SomeException
-  -- | Failure raised when calling 'liftIO' and it fails
+  -- | Failure thrown when calling 'liftIO' fails with an exception
   | ComponentIOLiftFailed !SomeException
   deriving (Generic, Show)
 
@@ -45,12 +72,18 @@ instance Exception ComponentBuildError
 
 type Description = Text
 
+-- | Contains metadata about the build of a resource from a 'ComponentM' value
 data Build
   = Build {
+      -- | Name of the component built
       componentDesc     :: !Description
+      -- | Cleanup sub-routine of the component built
     , componentTeardown :: !Teardown
+      -- | Elasped time in the allocation of a component resource
     , buildElapsedTime  :: !NominalDiffTime
+      -- | Error thrown in the allocation of a component resource
     , buildFailure      :: !(Maybe SomeException)
+      -- | What other components this build depends on
     , buildDependencies :: !(Set Description)
     }
   deriving (Generic)
@@ -84,8 +117,9 @@ instance Display Build where
 
 type BuildTable = HashMap Description Build
 
+-- | Wraps a collection of 'Build' records
 newtype BuildResult
-  = BuildResult [Build]
+  = BuildResult { toBuildList :: [Build] }
 
 instance Pretty BuildResult where
   pretty (BuildResult builds) =
@@ -97,6 +131,8 @@ instance Display BuildResult where
   display buildResult =
     displayShow $ pretty buildResult
 
+-- | An event record used to trace the execution of an application
+-- initialization and teardown
 data ComponentEvent
   = ComponentBuilt !BuildResult
   | ComponentReleased !TeardownResult
@@ -114,25 +150,10 @@ instance Pretty ComponentEvent where
 instance Display ComponentEvent where
   display = displayShow . pretty
 
-
--- newtype BuildError
---   = BuildError { fromBuildError :: [ComponentError] }
---   deriving (Generic, Show)
-
--- instance Exception BuildError
-
--- instance Pretty BuildError where
---   pretty (BuildError errList) =
---     Pretty.indent 2
---      $ Pretty.vsep
---      $ ["Your application failed with the following errors:"]
---      ++ map (\err -> Pretty.hsep ["-", pretty (show err)]) errList
-
--- instance Display BuildError where
---   display = displayShow . pretty
-
 --------------------
 
+-- | Represents the construction of a Component in your application, components
+-- may be composed using a 'Monad' or 'Applicative' interface.
 newtype ComponentM a
   = ComponentM (IO (Either ([ComponentBuildError], BuildTable)
                            (a, BuildTable)))

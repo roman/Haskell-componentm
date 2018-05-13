@@ -40,7 +40,6 @@ dependencies:
 library:
   source-dirs: src
   exposed-modules:
-  - Control.Monad.Component.Tutorial
   - Control.Monad.Component
   other-modules:
   - Control.Monad.Component.Internal.Types
@@ -60,6 +59,5 @@ tests:
     dependencies:
     - tasty
     - tasty-hunit
-    - tasty-rerun
     - componentm
 stability: alpha (experimental)

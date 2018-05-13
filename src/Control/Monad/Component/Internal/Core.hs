@@ -1,7 +1,12 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-module Control.Monad.Component.Internal.Core where
+module Control.Monad.Component.Internal.Core
+  ( buildComponent
+  , buildComponent_
+  , runComponentM
+  , runComponentM1
+  ) where
 
 import           RIO
 import           RIO.Time                               (NominalDiffTime,
@@ -30,8 +35,12 @@ trackExecutionTime routine = do
 -- `IO` sub-routine returns a resource that does not allocate any other
 -- resources that would need to be cleaned up on a system shutdown.
 --
+-- This is similar to using 'liftIO', with the caveat that the library will
+-- register the given 'IO' sub-routine as a Component, and it will keep track
+-- and report its initialization timespan
+--
 buildComponent_ :: Text -> IO a -> ComponentM a
-buildComponent_ !componentDesc !ma = ComponentM $ mask $ \restore -> do
+buildComponent_ !componentDesc ma = ComponentM $ mask $ \restore -> do
   (buildElapsedTime, result) <- trackExecutionTime (try $ restore ma)
   case result of
     Left err -> do
@@ -56,8 +65,23 @@ buildComponent_ !componentDesc !ma = ComponentM $ mask $ \restore -> do
           buildTable = HashMap.singleton componentDesc build
       return $ Right (output, buildTable)
 
-buildComponent :: Text -> IO a -> (a -> IO ()) -> (a -> IO b) -> ComponentM b
-buildComponent !componentDesc !construct !release !transform =
+-- | Use this function when you want to allocate a new resource (e.g. Database,
+-- Socket, etc). It registers the constructed resource in your application
+-- component tree and guarantees that its cleanup sub-routine is executed at the
+-- end of your program.
+--
+-- This function is similar to the 'bracket' function with the caveat that it
+-- expects a 'Text' argument which identifies the component being allocated.
+--
+-- NOTE: The name of your component must be unique; otherwise a
+-- 'DuplicatedComponentKeyDetected' will be thrown
+--
+buildComponent
+  :: Text         -- ^ Unique name for the component being allocated
+  -> IO a         -- ^ Allocation 'IO' sub-routine
+  -> (a -> IO ()) -- ^ Cleanup 'IO' sub-routine
+  -> ComponentM a
+buildComponent !componentDesc construct release =
   ComponentM $ mask $ \restore -> do
 
     (buildElapsedTime, (result, componentTeardown)) <- trackExecutionTime
@@ -76,21 +100,29 @@ buildComponent !componentDesc !construct !release !transform =
         buildTable = HashMap.singleton componentDesc build
 
     case result of
-      Left  err    -> return $ Left ([err], buildTable)
-
-      Right output -> return $ Right (output, buildTable)
+      Left  err      -> return $ Left ([err], buildTable)
+      Right resource -> return $ Right (resource, buildTable)
  where
   startComponent restore = do
-    resource         <- construct
-    resourceTeardown <- newTeardown componentDesc (release resource)
-    result           <- restore $ try $ transform resource
-    return $ case result of
-      Left err ->
-        (Left $ ComponentAllocationFailed componentDesc err, resourceTeardown)
-      Right output -> (Right output, resourceTeardown)
+    result <- restore (try construct)
+    case result of
+      Left err -> return
+        ( Left $ ComponentAllocationFailed componentDesc err
+        , emptyTeardown componentDesc
+        )
+      Right resource -> do
+        resourceTeardown <- newTeardown componentDesc (release resource)
+        return (Right resource, resourceTeardown)
 
+-- | Enhances 'runComponentM' with a callback function that emits
+-- 'ComponentEvent' records. These events are a great way of tracing the
+-- lifecycle and structure of your application.
 runComponentM1
-  :: (ComponentEvent -> IO ()) -> Text -> ComponentM a -> (a -> IO b) -> IO b
+  :: (ComponentEvent -> IO ()) -- ^ Callback function to trace 'ComponentEvent' records
+  -> Text                      -- ^ Name of your application (used for tracing purposes)
+  -> ComponentM a              -- ^ Builder of your application environment
+  -> (a -> IO b)               -- ^ Function where your main application will live
+  -> IO b
 runComponentM1 !logFn !appName (ComponentM buildFn) !appFn =
   mask $ \restore -> do
     result <- restore buildFn
@@ -115,5 +147,37 @@ runComponentM1 !logFn !appName (ComponentM buildFn) !appFn =
             throwIO $ ComponentRuntimeFailed appError teardownResult
           Right output -> return output
 
-runComponentM :: Text -> ComponentM a -> (a -> IO b) -> IO b
+-- | Constructs the /environment/ of your application by executing the 'IO'
+-- sub-routines provided in the 'buildComponent' and 'buildComponent_'
+-- functions; it then executes a callback where your main application will run.
+--
+-- This function:
+--
+-- * Keeps track of initialization elapsed time for each component of your
+--   application
+--
+-- * Initializes components concurrently as long as they are composed using
+--   'Applicative' functions
+--
+-- * Builds a graph of your dependencies automatically when composing your
+--   'ComponentM' values via 'Applicative' or 'Monad' interfaces; it then
+--   guarantees the execution of cleanup operations in a topological sorted
+--   order
+--
+-- * Guarantees the proper cleanup of previously allocated resources if the
+--   creation of a resource throws an exception on initialization
+--
+-- * Guarantees best-effort cleanup of resources on application teardown in the
+--   scenario where a cleanup sub-routine throws an exception
+--
+-- * Keeps track of teardown elasped time for each component of your
+--   application; and reports what exceptions was thrown in case of failures
+--
+-- If you want to trace the behavior of your application on initialization and
+-- teardown, use 'runComponentM1' instead
+runComponentM
+  :: Text           -- ^ Name of your application (used for tracing purposes)
+  -> ComponentM a   -- ^ Builder of your application environment
+  -> (a -> IO b)    -- ^ Function where your main application will live
+  -> IO b
 runComponentM = runComponentM1 (const $ return ())
