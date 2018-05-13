@@ -32,10 +32,9 @@ ghc-options:
 dependencies:
 - base >=4.8 && <5
 - rio >= 0.0.3
-- containers
-- time
+- containers >= 0.5.7
 - teardown >= 0.3
-- prettyprinter
+- prettyprinter >= 1.1
 
 library:
   source-dirs: src

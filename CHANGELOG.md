@@ -7,6 +7,10 @@ The change log is available [on GitHub][2].
 [1]: http://semver.org/spec/v2.0.0.html
 [2]: https://github.com/roman/Haskell-teardown/libraries/teardown/CHANGELOG.md
 
+## v0.0.0.1
+
+* Relax lower version bounds for `prettyprinter` and `containers` dependencies
+
 ## v0.0.0.0
 
 * Add `ComponentM` type, which supports `Monad` and `Applicative`
