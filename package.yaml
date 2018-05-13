@@ -10,11 +10,11 @@ description: |
   Check Control.Monad.Component.Tutorial for an example and
   more information.
 
-version: '0.0.0.0'
+version: '0.0.0.1'
 category: System
 author: Roman Gonzalez
-maintainer: romanandreg@gmail.com
-copyright: © 2017 Roman Gonzalez
+maintainer: open-source@roman-gonzalez.info
+copyright: © 2017-2018 Roman Gonzalez
 license: MIT
 github: roman/Haskell-componentm
 tested-with: GHC==8.0.1 GHC==8.0.2 GHC==8.2.1
@@ -44,8 +44,8 @@ library:
   - Control.Monad.Component.Internal.Types
   - Control.Monad.Component.Internal.Core
   dependencies:
-  - exceptions
-  - deepseq
+  - exceptions >= 0.8.3
+  - deepseq >= 1.4.2
 
 tests:
   componentm-tests:
@@ -56,7 +56,7 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - tasty
-    - tasty-hunit
+    - tasty >= 0.11.2
+    - tasty-hunit >= 0.9.2
     - componentm
 stability: alpha (experimental)
