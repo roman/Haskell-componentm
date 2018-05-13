@@ -60,7 +60,7 @@ error.
 ## Development
 [![Build Status](https://travis-ci.org/roman/Haskell-componentm.svg?branch=master)](https://travis-ci.org/roman/Haskell-componentm)
 [![Hackage Dependencies](https://img.shields.io/hackage-deps/v/componentm.svg)](http://packdeps.haskellers.com/feed?needle=componentm)
-[![Github](https://img.shields.io/github/commits-since/roman/haskell-componentm/v0.0.0.0.svg)](https://img.shields.io/github/commits-since/roman/haskell-componentm/v0.0.0.0.svg)
+[![Github](https://img.shields.io/github/commits-since/roman/haskell-componentm/v0.0.0.1.svg)](https://img.shields.io/github/commits-since/roman/haskell-componentm/v0.0.0.1.svg)
 
 This library is intended to be minimal, providing a few functions that work
 reliably among many different kind of projects. If you want to contribute, Pull
