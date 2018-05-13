@@ -9,7 +9,8 @@ The change log is available [on GitHub][2].
 
 ## v0.0.0.1
 
-* Relax lower version bounds for `prettyprinter` and `containers` dependencies
+* Relax lower version bounds for `prettyprinter`, `containers`, `exceptions`,
+  `deepseq`, `tasty`, `tasty-hunit` dependencies
 
 ## v0.0.0.0
 
