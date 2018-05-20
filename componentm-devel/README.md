@@ -38,11 +38,9 @@ dependencies:
 
 ## Purpose
 
-This library is intended to be a high level API for the
-[teardown](http://hackage.haskell.org/package/teardown) library; it provides a
-high level monad interface that helps composition of resource
-allocation/teardown in a safe and reliable way.
-
+This library enhances the
+[componentm](https://github.com/Haskell-componentm/componentm) library to
+dispose and re-allocate an application on a REPL environment.
 
 ## Development
 [![Build Status](https://travis-ci.org/roman/Haskell-componentm.svg?branch=master)](https://travis-ci.org/roman/Haskell-componentm)
