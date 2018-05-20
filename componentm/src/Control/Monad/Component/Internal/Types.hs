@@ -29,6 +29,8 @@ import           Data.Graph                (graphFromEdges', topSort)
 import           Control.Teardown          (Teardown, TeardownResult,
                                             newTeardown)
 
+import           Text.Show.Pretty          (ppShow)
+
 --------------------------------------------------------------------------------
 
 -- | Exception thrown by the 'runComponentM' family of functions
@@ -55,6 +57,30 @@ data ComponentError
 
 instance Exception ComponentError
 
+instance Pretty ComponentError where
+  pretty err =
+    case err of
+      ComponentBuildFailed errList teardownResult ->
+        "Application failed on initialization, following are the exceptions that made it failed:"
+        <> Pretty.hardline
+        <> Pretty.hardline
+        <> Pretty.indent 2 (Pretty.vsep $ map (\buildErr -> "* " <> pretty buildErr <> Pretty.hardline) errList)
+        <> Pretty.hardline
+        <> "Following, we have the information of application resources cleanup:"
+        <> Pretty.hardline
+        <> Pretty.hardline
+        <> pretty teardownResult
+
+      ComponentRuntimeFailed runtimeErr teardownResult ->
+        "Application failed at runtime, following is the exception that made the app failed:"
+        <> Pretty.hardline
+        <> Pretty.hardline
+        <> Pretty.indent 2 (pretty $ ppShow runtimeErr)
+        <> Pretty.hardline
+        <> "Following, we have the information of application resources cleanup:"
+        <> Pretty.hardline
+        <> pretty teardownResult
+
 -- | Exception raised on the execution of 'IO' sub-routines used when
 -- constructing 'ComponentM' values (e.g. 'buildComponent')
 data ComponentBuildError
@@ -69,6 +95,31 @@ data ComponentBuildError
   deriving (Generic, Show)
 
 instance Exception ComponentBuildError
+
+instance Pretty ComponentBuildError where
+  pretty err =
+    case err of
+      DuplicatedComponentKeyDetected desc ->
+        "DuplicateComponentKeyDetected" <+> pretty (show desc) <+> "- please, make sure that component names are unique"
+
+      ComponentAllocationFailed desc componentErr ->
+        "ComponentAllocationFailed" <+> pretty (show desc) <+> "- the following error was reported:"
+        <> Pretty.nest 2 (Pretty.hardline
+                          <> "|" <> Pretty.hardline
+                          <> Pretty.nest 4 ("`-" <+> pretty (ppShow componentErr)))
+
+
+      ComponentErrorThrown thrownErr ->
+        "ComponentErrorThrown - the following error was thrown using the `throwM` function:"
+        <> Pretty.nest 2 (Pretty.hardline
+                          <> "|" <> Pretty.hardline
+                          <> Pretty.nest 4 ("`-" <+> pretty (ppShow thrownErr)))
+
+      ComponentIOLiftFailed ioErr ->
+        "ComponentIOLiftFailed - the following error was thrown from an `IO` operation invoked via `liftIO`:"
+        <> Pretty.nest 2 (Pretty.hardline
+                          <> "|" <> Pretty.hardline
+                          <> Pretty.nest 4 ("`-" <+> pretty (ppShow ioErr)))
 
 type Description = Text
 
@@ -98,7 +149,7 @@ instance Pretty Build where
         if isJust buildFailure then
           [
             Pretty.hardline
-          , Pretty.pipe <+> pretty (show buildFailure)
+          , Pretty.pipe <+> pretty (ppShow buildFailure)
           ]
         else
           []
@@ -123,9 +174,11 @@ newtype BuildResult
 
 instance Pretty BuildResult where
   pretty (BuildResult builds) =
-      pretty ("Application Initialized" :: Text)
+      "Following, we have the information of the application resources initialization:"
+      <> Pretty.hardline
       <> Pretty.hardline
       <> Pretty.vsep (map pretty builds)
+      <> Pretty.hardline
 
 instance Display BuildResult where
   display buildResult =
@@ -136,16 +189,34 @@ instance Display BuildResult where
 data ComponentEvent
   = ComponentBuilt !BuildResult
   | ComponentReleased !TeardownResult
+  | ComponentErrorDetected !ComponentError
 
 instance Pretty ComponentEvent where
   pretty ev =
     case ev of
       ComponentBuilt buildResult ->
-        pretty buildResult
+        Pretty.hardline
+        <> "# Application Initialized"
+        <> Pretty.hardline
+        <> Pretty.hardline
+        <> pretty buildResult
+        <> Pretty.hardline
+
       ComponentReleased teardownResult ->
-        "Application Teardown"
+        Pretty.hardline
+        <> "# Application Finished"
+        <> Pretty.hardline
         <> Pretty.hardline
         <> pretty teardownResult
+        <> Pretty.hardline
+
+      ComponentErrorDetected err ->
+        Pretty.hardline
+        <> "# Application Failed"
+        <> Pretty.hardline
+        <> Pretty.hardline
+        <> pretty err
+        <> Pretty.hardline
 
 instance Display ComponentEvent where
   display = displayShow . pretty
