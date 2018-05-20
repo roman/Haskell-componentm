@@ -59,12 +59,10 @@ module Control.Monad.Component
   , runComponentM
   , runComponentM1
 
-
   -- * Error Records
   -- $errors
   , ComponentError (..)
   , ComponentBuildError (..)
-
 
   -- * 'ComponentM' tracing accessors
   , ComponentEvent (..)

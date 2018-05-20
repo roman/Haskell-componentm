@@ -4,10 +4,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Control.Monad.Component.Development
   (
+  -- * Making 'ComponentM' values useful
     ComponentM
   , runComponentDevel
+
+  -- * Error Records
   , ComponentError (..)
   , ComponentBuildError (..)
+
+  -- * 'ComponentM' tracing accessors
   , ComponentEvent (..)
   , Build
   , buildElapsedTime
@@ -57,6 +62,17 @@ runComponentDevel_ !logFn !appName (ComponentM buildFn) !appFn =
                                         (cancel appAsync :: IO ())
         newTeardown "development" [appTeardown, appAsyncTeardown]
 
+-- | Similar to 'runComponentM1', when running for the first time, it creates an
+-- application in the REPL environment, subsequent invocations will teardown the
+-- and build up the application again.
+--
+-- All 'ComponentM' characteristics are driven by this particular use-case given:
+--
+-- * It will print out the time spent on initialization and teardown
+-- * It guarantees that teardown operations are as robust as possible
+-- * It documents your application components to pin-point quickly errors in your
+--   reloading logic
+--
 runComponentDevel
   :: (ComponentEvent -> IO ()) -- ^ Callback function to trace 'ComponentEvent' records
   -> Text                      -- ^ Name of your application (used for tracing purposes)
