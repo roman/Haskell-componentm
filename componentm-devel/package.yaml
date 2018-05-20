@@ -1,0 +1,40 @@
+name: componentm-devel
+synopsis: Easy REPL driven development using ComponentM
+description: |
+  This library enhances the componentm with auto-reloading
+  capabilites for your application, allowing to ensure cleanup
+  of resources when doing REPL driven development, or when using
+  ghcid
+
+version: '0.0.0.2'
+category: System
+author: Roman Gonzalez
+maintainer: open-source@roman-gonzalez.info
+copyright: © 2017-current Roman Gonzalez
+license: MIT
+github: roman/Haskell-componentm
+tested-with: GHC==8.0.1 GHC==8.0.2 GHC==8.2.1
+extra-source-files:
+- README.md
+- CHANGELOG.md
+
+ghc-options:
+- -Wall
+# as recommended in:
+# https://functor.tokyo/blog/2017-07-28-ghc-warnings-you-should-enable
+- -Wincomplete-uni-patterns
+- -Wincomplete-record-updates
+
+dependencies:
+- base >=4.8 && <5
+- rio >= 0.0.3
+- teardown >= 0.3
+- componentm >= 0.0.0.2
+- foreign-store >= 0.2
+
+library:
+  source-dirs: src
+  exposed-modules:
+  - Control.Monad.Component.Development
+
+stability: alpha (experimental)
