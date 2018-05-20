@@ -36,8 +36,8 @@ resolver: lts-11.4
 # non-dependency (i.e. a user package), and its test suites and benchmarks
 # will not be run. This is useful for tweaking upstream packages.
 packages:
-- ./componentm
-- ./componentm-devel
+- componentm
+- componentm-devel
 
 # - 'examples/teardown-example'
 # Dependency packages to be pulled from upstream that are not in the resolver
