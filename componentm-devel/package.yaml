@@ -28,7 +28,7 @@ ghc-options:
 dependencies:
 - base >=4.8 && <5
 - rio >= 0.0.3
-- teardown >= 0.3
+- teardown >= 0.5
 - componentm >= 0.0.0.2
 - foreign-store >= 0.2
 

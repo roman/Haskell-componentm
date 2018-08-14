@@ -30,7 +30,7 @@ dependencies:
 - base >=4.8 && <5
 - rio >= 0.0.3
 - containers >= 0.5.7
-- teardown >= 0.3
+- teardown >= 0.5
 - prettyprinter >= 1.1
 - pretty-show >= 1.6.13
 
