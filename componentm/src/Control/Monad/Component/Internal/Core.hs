@@ -21,6 +21,8 @@ import           Control.Teardown                       (emptyTeardown,
                                                          newTeardown,
                                                          runTeardown)
 
+import qualified Control.Exception                      as UnsafeExceptions
+
 --------------------------------------------------------------------------------
 
 -- | Track duration time of the execution of an IO sub-routine
@@ -41,7 +43,9 @@ trackExecutionTime routine = do
 --
 buildComponent_ :: Text -> IO a -> ComponentM a
 buildComponent_ !componentDesc ma = ComponentM $ mask $ \restore -> do
-  (buildElapsedTime, result) <- trackExecutionTime (try $ restore ma)
+  (buildElapsedTime, result) <-
+    trackExecutionTime (UnsafeExceptions.try $ restore ma)
+
   case result of
     Left err -> do
       let build = Build
@@ -104,7 +108,7 @@ buildComponent !componentDesc construct release =
       Right resource -> return $ Right (resource, buildTable)
  where
   startComponent restore = do
-    result <- restore (try construct)
+    result <- restore (UnsafeExceptions.try construct)
     case result of
       Left err -> return
         ( Left $ ComponentAllocationFailed componentDesc err
@@ -138,7 +142,7 @@ runComponentM1 !logFn !appName (ComponentM buildFn) !appFn =
         restore $ logFn $ ComponentBuilt $ BuildResult $ reverse buildList
 
         appTeardown    <- buildTableToTeardown appName buildTable
-        appResult      <- tryAny $ restore $ appFn resource
+        appResult      <- UnsafeExceptions.try $ restore $ appFn resource
         teardownResult <- runTeardown appTeardown
         restore $ logFn $ ComponentReleased teardownResult
 
